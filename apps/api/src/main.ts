@@ -19,8 +19,9 @@ async function bootstrap() {
     logger.error('Uncaught exception', error.stack);
   });
 
-  await app.listen(process.env.API_PORT || 3333);
-  console.log(`API running on http://localhost:${process.env.API_PORT || 3333}`);
+  const port = process.env.PORT || process.env.API_PORT || 3333;
+  await app.listen(port);
+  console.log(`API running on http://localhost:${port}`);
 }
 
 bootstrap();
