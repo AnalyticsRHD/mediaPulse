@@ -1,0 +1,6 @@
+{
+  "framework": "nextjs",
+  "installCommand": "npm install --include=dev",
+  "buildCommand": "npm --workspace @mediapulse/web run build",
+  "outputDirectory": "apps/web/.next"
+}

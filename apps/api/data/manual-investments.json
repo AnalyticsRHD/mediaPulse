@@ -1,0 +1,41 @@
+[
+  {
+    "id": "45b256b1-ea8d-4cc2-b5e6-e8f321acfa1d",
+    "anunciante": "BINDER RULEMANES",
+    "marca": "Binder",
+    "moneda": "ARS",
+    "status": "PRESUPUESTO_OK",
+    "plataforma": "META",
+    "objetivo": "Ventas",
+    "presupuesto": 123,
+    "costoPorResultado": 123,
+    "tktPromedio": 123,
+    "mes": "2026-06"
+  },
+  {
+    "id": "1d9e4d70-2267-4bf5-b7e9-bc787a230d26",
+    "anunciante": "BINDER RULEMANES",
+    "marca": "Binder",
+    "moneda": "ARS",
+    "status": "EN_PROCESO",
+    "plataforma": "META",
+    "objetivo": "Ventas",
+    "presupuesto": 23,
+    "costoPorResultado": 3,
+    "tktPromedio": 60000,
+    "mes": "2026-06"
+  },
+  {
+    "id": "31a3951f-e17f-404b-85d2-9fec1e86181b",
+    "anunciante": "BINDER RULEMANES",
+    "marca": "Binder",
+    "moneda": "ARS",
+    "status": "EN_PROCESO",
+    "plataforma": "META",
+    "objetivo": "Ventas",
+    "presupuesto": 11111111,
+    "costoPorResultado": 213333,
+    "tktPromedio": 60000,
+    "mes": "2026-06"
+  }
+]

@@ -90,6 +90,18 @@ export class InvestmentsService {
     return this.updateManualLine(id, { presupuesto });
   }
 
+  deleteManualLines(ids: string[]): { deletedCount: number; deletedIds: string[] } {
+    const deletedIds = ids.filter((id) => this.manualLines.delete(id));
+    if (deletedIds.length > 0) {
+      this.persistManualLines();
+    }
+
+    return {
+      deletedCount: deletedIds.length,
+      deletedIds
+    };
+  }
+
   updateManualLine(id: string, dto: Partial<ManualInvestmentDto>): ManualInvestmentLine | null {
     const existing = this.manualLines.get(id);
     if (!existing) return null;

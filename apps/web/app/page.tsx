@@ -125,7 +125,7 @@ const defaultForm: ManualForm = {
   objetivo: 'Ventas',
   presupuesto: '',
   costoPorResultado: '',
-  tktPromedio: '60000',
+  tktPromedio: '',
   mes: currentDate.slice(0, 7)
 };
 
@@ -227,6 +227,10 @@ export default function Home() {
   const [summaryCurrency, setSummaryCurrency] = useState<InvestmentCurrency>('ARS');
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [lineDraft, setLineDraft] = useState<ManualForm | null>(null);
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedDeleteIds, setSelectedDeleteIds] = useState<string[]>([]);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [previewClientFilter, setPreviewClientFilter] = useState('');
   const [previewBrandFilter, setPreviewBrandFilter] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -432,6 +436,8 @@ export default function Home() {
   }
 
   function startLineEdit(line: InvestmentLine) {
+    setDeleteMode(false);
+    setSelectedDeleteIds([]);
     setEditingLineId(line.id);
     setLineDraft({
       anunciante: line.anunciante,
@@ -445,6 +451,46 @@ export default function Home() {
       status: line.status,
       mes: line.mes
     });
+  }
+
+  function toggleDeleteMode() {
+    setEditingLineId(null);
+    setLineDraft(null);
+    setDeleteMode((current) => {
+      if (current) setSelectedDeleteIds([]);
+      return !current;
+    });
+  }
+
+  function toggleDeleteSelection(id: string) {
+    setSelectedDeleteIds((current) => (
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id]
+    ));
+  }
+
+  async function confirmDeleteLines() {
+    if (selectedDeleteIds.length === 0) return;
+
+    setDeleting(true);
+    setErrorMessage('');
+    try {
+      await requestJson(`${API_BASE}/investments/manual`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedDeleteIds })
+      });
+      setDeleteModalOpen(false);
+      setDeleteMode(false);
+      setSelectedDeleteIds([]);
+      await loadInvestments();
+      await loadManualPreview();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudieron eliminar las lineas');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -606,14 +652,46 @@ export default function Home() {
                 />
               </div>
             </div>
+            {groupedLines.length === 0 ? (
+              <div className="manual-empty">
+                No hay cargas manuales para este mes.
+              </div>
+            ) : null}
             {groupedLines.map((group) => {
               const clientTotals = getClientTotals(group.lines);
               const brandTotals = getBrandTotals(group.lines);
               return (
                 <section className="preview-block" key={group.key}>
                   <div className="preview-title">
-                    <strong>{group.lines[0].anunciante}</strong>
-                    <span>{group.lines[0].moneda}</span>
+                    <div className="preview-title-main">
+                      <strong>{group.lines[0].anunciante}</strong>
+                      <span>{group.lines[0].moneda}</span>
+                    </div>
+                    <div className="preview-title-actions">
+                      {deleteMode ? (
+                        <button className="secondary-button" type="button" onClick={() => {
+                          setDeleteMode(false);
+                          setSelectedDeleteIds([]);
+                        }}>
+                          Cancelar
+                        </button>
+                      ) : null}
+                      <button
+                        className={`icon-button delete ${deleteMode ? 'active' : ''}`}
+                        type="button"
+                        onClick={() => {
+                          if (!deleteMode) {
+                            toggleDeleteMode();
+                            return;
+                          }
+                          if (selectedDeleteIds.length > 0) setDeleteModalOpen(true);
+                        }}
+                        aria-label={deleteMode ? 'Eliminar seleccionados' : 'Seleccionar lineas para eliminar'}
+                        disabled={deleteMode && selectedDeleteIds.length === 0}
+                      >
+                        <img src="/assets/delete.svg" alt="" aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
                   <table>
                     <thead>
@@ -642,7 +720,19 @@ export default function Home() {
                                 options={brandCatalog[lineDraft.anunciante] ?? []}
                                 onChange={(value) => setLineDraft({ ...lineDraft, marca: value })}
                               />
-                            ) : line.marca ?? '-'}
+                            ) : (
+                              <div className="brand-cell">
+                                {deleteMode ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedDeleteIds.includes(line.id)}
+                                    onChange={() => toggleDeleteSelection(line.id)}
+                                    aria-label={`Seleccionar ${line.marca ?? line.anunciante}`}
+                                  />
+                                ) : null}
+                                <span>{line.marca ?? '-'}</span>
+                              </div>
+                            )}
                           </td>
                           <td>
                             {editingLineId === line.id && lineDraft ? (
@@ -716,14 +806,16 @@ export default function Home() {
                           <td>{Math.round(line.share * 100)}%</td>
                           <td>{integer.format(line.resultadosProyectados)}</td>
                           <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
-                          <td>
+                          <td className="actions-cell">
                             {editingLineId === line.id ? (
                               <div className="inline-actions">
-                                <button className="icon-button confirm" type="button" onClick={() => saveLine(line)} aria-label="Guardar linea">OK</button>
+                                <button className="icon-button confirm" type="button" onClick={() => saveLine(line)} aria-label="Guardar linea">✓</button>
                                 <button className="icon-button" type="button" onClick={() => setEditingLineId(null)} aria-label="Cancelar edicion">X</button>
                               </div>
                             ) : (
-                              <button className="icon-button" type="button" onClick={() => startLineEdit(line)} aria-label="Editar linea">Edit</button>
+                              <button className="icon-button" type="button" onClick={() => startLineEdit(line)} aria-label="Editar linea" disabled={deleteMode}>
+                                <img src="/assets/edit.svg" alt="" aria-hidden="true" />
+                              </button>
                             )}
                           </td>
                         </tr>
@@ -758,6 +850,27 @@ export default function Home() {
           </div>
         </section>
       )}
+
+      {deleteModalOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+            <div className="modal-icon">X</div>
+            <h2 id="delete-title">Estas seguro?</h2>
+            <p>
+              De verdad quieres eliminar estos registros?<br />
+              Este proceso no se puede deshacer.
+            </p>
+            <div className="modal-actions">
+              <button className="modal-button muted" type="button" onClick={() => setDeleteModalOpen(false)} disabled={deleting}>
+                Cancelar
+              </button>
+              <button className="modal-button danger" type="button" onClick={confirmDeleteLines} disabled={deleting}>
+                {deleting ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -895,6 +1008,20 @@ function StatusToggle({
   compact?: boolean;
   onChange: (status: InvestmentStatus) => void;
 }) {
+  if (compact) {
+    return (
+      <select
+        className={`status-select ${value === 'PRESUPUESTO_OK' ? 'green' : 'yellow'}`}
+        value={value}
+        onChange={(event) => onChange(event.target.value as InvestmentStatus)}
+        aria-label="Status"
+      >
+        <option value="EN_PROCESO">En proceso</option>
+        <option value="PRESUPUESTO_OK">Confirmado</option>
+      </select>
+    );
+  }
+
   return (
     <div className={`status-toggle ${compact ? 'compact' : ''}`}>
       <label className={`status-option yellow ${value === 'EN_PROCESO' ? 'active' : ''}`}>
@@ -911,7 +1038,7 @@ function StatusToggle({
           checked={value === 'PRESUPUESTO_OK'}
           onChange={() => onChange('PRESUPUESTO_OK')}
         />
-        Presupuesto OK
+        Confirmado
       </label>
     </div>
   );

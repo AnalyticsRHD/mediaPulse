@@ -1,4 +1,4 @@
-import { Body, Controller, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { InvestmentsService } from './investments.service';
 import { ManualInvestmentDto } from './dto/manual-investment.dto';
 
@@ -39,5 +39,14 @@ export class InvestmentsController {
     const updated = this.investmentsService.updateManualLine(id, dto);
     if (!updated) throw new NotFoundException('Manual investment line not found');
     return updated;
+  }
+
+  @Delete('manual')
+  deleteManualLines(@Body('ids') ids: string[]) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('ids must be a non-empty array');
+    }
+
+    return this.investmentsService.deleteManualLines(ids);
   }
 }
