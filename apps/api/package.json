@@ -1,0 +1,28 @@
+{
+  "name": "@mediapulse/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "ts-node --transpile-only src/main.ts",
+    "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/schedule": "^4.0.0",
+    "reflect-metadata": "^0.1.13",
+    "rxjs": "^7.0.0",
+    "class-validator": "^0.14.1",
+    "class-transformer": "^0.5.1",
+    "uuid": "^9.0.1",
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.6.0"
+  }
+}

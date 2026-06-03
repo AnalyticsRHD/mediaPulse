@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    "strict": true,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "resolveJsonModule": true,
+
+    "esModuleInterop": true,
+
+    "composite": true,
+
+    "baseUrl": ".",
+
+    "paths": {
+      "@mediapulse/shared": ["./packages/shared/src"]
+    },
+
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    "ignoreDeprecations": "5.0"
+  },
+
+  "include": ["packages/**/*", "apps/**/*"],
+
+  "exclude": ["node_modules", "dist"]
+}

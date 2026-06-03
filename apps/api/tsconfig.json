@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+
+    "module": "Node16",
+    "moduleResolution": "node16",
+    
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    "strict": true,
+
+    "sourceMap": true,
+    "declaration": true,
+    "removeComments": true,
+
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    "types": ["node"]
+  },
+
+  "include": ["src"],
+
+  "exclude": ["node_modules", "dist"]
+}
