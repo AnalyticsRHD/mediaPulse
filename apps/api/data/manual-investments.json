@@ -37,5 +37,31 @@
     "costoPorResultado": 213333,
     "tktPromedio": 60000,
     "mes": "2026-06"
+  },
+  {
+    "id": "f75aa063-cd4a-452f-b218-2dc06162976d",
+    "anunciante": "WORLD SPORT",
+    "marca": "RVCA",
+    "moneda": "ARS",
+    "status": "EN_PROCESO",
+    "plataforma": "Google",
+    "objetivo": "Ventas-PMAX",
+    "presupuesto": 123,
+    "costoPorResultado": 213,
+    "tktPromedio": 213,
+    "mes": "2026-06"
+  },
+  {
+    "id": "e156468b-d8d6-4539-b377-a81b3f89084f",
+    "anunciante": "WORLD SPORT",
+    "marca": "Ala Moana",
+    "moneda": "ARS",
+    "status": "EN_PROCESO",
+    "plataforma": "Google",
+    "objetivo": "Ventas",
+    "presupuesto": 13,
+    "costoPorResultado": 321,
+    "tktPromedio": 2,
+    "mes": "2026-06"
   }
 ]

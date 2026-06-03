@@ -825,9 +825,14 @@ export default function Home() {
                       {brandTotals.map((item) => (
                         <tr key={item.marca}>
                           <td>Total marca: {item.marca}</td>
-                          <td colSpan={3}></td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
                           <td>{formatMoney(item.presupuesto, group.lines[0].moneda)}</td>
-                          <td colSpan={4}></td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
                           <td>{formatMoney(item.fcProyectada, group.lines[0].moneda)}</td>
                           <td></td>
                         </tr>
@@ -835,9 +840,14 @@ export default function Home() {
                       {clientTotals.map((item) => (
                         <tr key={item.cliente}>
                           <td>Total cliente: {item.cliente}</td>
-                          <td colSpan={3}></td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
                           <td>{formatMoney(item.presupuesto, group.lines[0].moneda)}</td>
-                          <td colSpan={4}></td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
                           <td>{formatMoney(item.fcProyectada, group.lines[0].moneda)}</td>
                           <td></td>
                         </tr>
