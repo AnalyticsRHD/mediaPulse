@@ -16,8 +16,6 @@
 
     "composite": true,
 
-    "baseUrl": ".",
-
     "paths": {
       "@mediapulse/shared": ["./packages/shared/src"]
     },
