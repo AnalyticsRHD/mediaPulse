@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { BrandMappingRepository } from './brand-mapping.repository';
 
 export type BrandMapping = {
   cliente: string;
@@ -7,7 +8,8 @@ export type BrandMapping = {
 
 @Injectable()
 export class BrandMappingService {
-  private mappings: BrandMapping[] = [
+  private mappingsHydrated = false;
+  private readonly defaultMappings: BrandMapping[] = [
     { cliente: 'WORLD SPORT', marca: 'Quiksilver' },
     { cliente: 'WORLD SPORT', marca: 'DC' },
     { cliente: 'WORLD SPORT', marca: 'Ala Moana' },
@@ -36,15 +38,22 @@ export class BrandMappingService {
     { cliente: 'RHD', marca: 'Rhd' }
   ];
 
-  getAll(): BrandMapping[] {
+  private mappings: BrandMapping[] = this.defaultMappings;
+
+  constructor(private readonly brandMappingRepository: BrandMappingRepository) {}
+
+  async getAll(): Promise<BrandMapping[]> {
+    await this.hydrateMappings();
     return this.mappings;
   }
 
-  getClients(): string[] {
+  async getClients(): Promise<string[]> {
+    await this.hydrateMappings();
     return Array.from(new Set(this.mappings.map((item) => item.cliente))).sort();
   }
 
-  getBrandsByClient(cliente: string): string[] {
+  async getBrandsByClient(cliente: string): Promise<string[]> {
+    await this.hydrateMappings();
     const normalizedClient = this.normalize(cliente);
 
     return this.mappings
@@ -53,7 +62,8 @@ export class BrandMappingService {
       .sort();
   }
 
-  resolveClientBrand(cliente: string, marca: string): BrandMapping {
+  async resolveClientBrand(cliente: string, marca: string): Promise<BrandMapping> {
+    await this.hydrateMappings();
     const normalizedClient = this.normalize(cliente);
     const normalizedBrand = this.normalize(marca);
     const exact = this.mappings.find((item) => (
@@ -63,7 +73,7 @@ export class BrandMappingService {
 
     if (exact) return exact;
 
-    const byBrand = this.resolve(marca);
+    const byBrand = await this.resolve(marca);
     if (byBrand.cliente !== 'SIN MAPEO') return byBrand;
 
     return {
@@ -72,7 +82,8 @@ export class BrandMappingService {
     };
   }
 
-  resolve(reference: string): BrandMapping {
+  async resolve(reference: string): Promise<BrandMapping> {
+    await this.hydrateMappings();
     const normalizedReference = this.normalize(reference);
     const exact = this.mappings.find((item) => this.normalize(item.marca) === normalizedReference);
     if (exact) return exact;
@@ -100,5 +111,20 @@ export class BrandMappingService {
 
   private toTitleCase(value: string): string {
     return value.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  private async hydrateMappings(): Promise<void> {
+    if (this.mappingsHydrated) return;
+    this.mappingsHydrated = true;
+
+    try {
+      await this.brandMappingRepository.seed(this.defaultMappings);
+      const databaseMappings = await this.brandMappingRepository.findAll();
+      if (databaseMappings.length > 0 || this.brandMappingRepository.enabled) {
+        this.mappings = databaseMappings;
+      }
+    } catch {
+      this.mappings = this.defaultMappings;
+    }
   }
 }

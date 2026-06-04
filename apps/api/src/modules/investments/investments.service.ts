@@ -6,27 +6,31 @@ import { join } from 'path';
 import { MetricsService } from '../metrics/metrics.service';
 import { ManualInvestmentDto } from './dto/manual-investment.dto';
 import { BrandMappingService } from '../../common/brand-mapping/brand-mapping.service';
+import { ManualInvestmentsRepository } from './manual-investments.repository';
 
 @Injectable()
 export class InvestmentsService {
   private manualLines = new Map<string, ManualInvestmentLine>();
   private readonly manualLinesDir = join(__dirname, '../../../data');
   private readonly manualLinesPath = join(this.manualLinesDir, 'manual-investments.json');
+  private manualLinesHydrated = false;
 
   constructor(
     private readonly metricsService: MetricsService,
-    private readonly brandMappingService: BrandMappingService
+    private readonly brandMappingService: BrandMappingService,
+    private readonly manualInvestmentsRepository: ManualInvestmentsRepository
   ) {
     this.loadManualLines();
   }
 
-  findAll(
+  async findAll(
     mes = this.currentMonth(),
     date = this.getYesterdayDate(),
     startDate = date,
     endDate = date,
     includeDrafts = false
-  ): InvestmentsResponse {
+  ): Promise<InvestmentsResponse> {
+    await this.hydrateManualLines();
     const safeStartDate = this.ensureDate(startDate, 'startDate');
     const safeEndDate = this.ensureDate(endDate, 'endDate');
     const resolvedMes = this.ensureMonth(mes || safeStartDate.slice(0, 7), 'mes');
@@ -64,9 +68,10 @@ export class InvestmentsService {
     };
   }
 
-  createManualLine(dto: ManualInvestmentDto): ManualInvestmentLine {
+  async createManualLine(dto: ManualInvestmentDto): Promise<ManualInvestmentLine> {
+    await this.hydrateManualLines();
     this.ensureManualLine(dto);
-    const mapping = this.brandMappingService.resolveClientBrand(
+    const mapping = await this.brandMappingService.resolveClientBrand(
       dto.anunciante,
       dto.marca || dto.anunciante
     );
@@ -82,15 +87,22 @@ export class InvestmentsService {
     };
 
     this.manualLines.set(line.id, line);
-    this.persistManualLines();
+    await this.persistManualLine(line);
     return line;
   }
 
-  updateManualBudget(id: string, presupuesto: number): ManualInvestmentLine | null {
+  async updateManualBudget(id: string, presupuesto: number): Promise<ManualInvestmentLine | null> {
     return this.updateManualLine(id, { presupuesto });
   }
 
-  deleteManualLines(ids: string[]): { deletedCount: number; deletedIds: string[] } {
+  async deleteManualLines(ids: string[]): Promise<{ deletedCount: number; deletedIds: string[] }> {
+    await this.hydrateManualLines();
+    const databaseResult = await this.deleteManualLinesFromDatabase(ids);
+    if (databaseResult) {
+      databaseResult.deletedIds.forEach((id) => this.manualLines.delete(id));
+      return databaseResult;
+    }
+
     const deletedIds = ids.filter((id) => this.manualLines.delete(id));
     if (deletedIds.length > 0) {
       this.persistManualLines();
@@ -102,12 +114,13 @@ export class InvestmentsService {
     };
   }
 
-  updateManualLine(id: string, dto: Partial<ManualInvestmentDto>): ManualInvestmentLine | null {
+  async updateManualLine(id: string, dto: Partial<ManualInvestmentDto>): Promise<ManualInvestmentLine | null> {
+    await this.hydrateManualLines();
     const existing = this.manualLines.get(id);
     if (!existing) return null;
     this.ensureManualLine({ ...existing, ...dto });
 
-    const mapping = this.brandMappingService.resolveClientBrand(
+    const mapping = await this.brandMappingService.resolveClientBrand(
       dto.anunciante || existing.anunciante,
       dto.marca || existing.marca || dto.anunciante || existing.anunciante
     );
@@ -126,11 +139,12 @@ export class InvestmentsService {
     };
 
     this.manualLines.set(id, updated);
-    this.persistManualLines();
+    await this.persistManualLine(updated);
     return updated;
   }
 
-  getManualLines(mes?: string): ManualInvestmentLine[] {
+  async getManualLines(mes?: string): Promise<ManualInvestmentLine[]> {
+    await this.hydrateManualLines();
     const lines = Array.from(this.manualLines.values());
     const filtered = mes ? lines.filter((line) => line.mes === mes) : lines;
     return filtered.sort((a, b) => this.sortManualLines(a, b));
@@ -293,6 +307,26 @@ export class InvestmentsService {
     }
   }
 
+  private async hydrateManualLines(): Promise<void> {
+    if (this.manualLinesHydrated) return;
+    this.manualLinesHydrated = true;
+
+    try {
+      const fileLines = Array.from(this.manualLines.values());
+      if (fileLines.length > 0) {
+        await this.manualInvestmentsRepository.syncFromFile(fileLines);
+      }
+
+      const databaseLines = await this.manualInvestmentsRepository.findAll();
+      if (databaseLines.length > 0 || this.manualInvestmentsRepository.enabled) {
+        this.manualLines = new Map(databaseLines.map((line) => [line.id, line]));
+      }
+    } catch {
+      this.manualLinesHydrated = false;
+      throw new ServiceUnavailableException('Could not load manual investments');
+    }
+  }
+
   private loadManualLines(): void {
     try {
       if (!existsSync(this.manualLinesPath)) return;
@@ -311,6 +345,23 @@ export class InvestmentsService {
       writeFileSync(this.manualLinesPath, JSON.stringify(Array.from(this.manualLines.values()), null, 2));
     } catch {
       throw new ServiceUnavailableException('Could not persist manual investments');
+    }
+  }
+
+  private async persistManualLine(line: ManualInvestmentLine): Promise<void> {
+    try {
+      const persisted = await this.manualInvestmentsRepository.upsert(line);
+      if (!persisted) this.persistManualLines();
+    } catch {
+      throw new ServiceUnavailableException('Could not persist manual investment');
+    }
+  }
+
+  private async deleteManualLinesFromDatabase(ids: string[]): Promise<{ deletedCount: number; deletedIds: string[] } | null> {
+    try {
+      return await this.manualInvestmentsRepository.deleteMany(ids);
+    } catch {
+      throw new ServiceUnavailableException('Could not delete manual investments');
     }
   }
 }

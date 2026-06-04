@@ -28,15 +28,15 @@ export class InvestmentsController {
   }
 
   @Patch('manual/:id/presupuesto')
-  updateManualBudget(@Param('id') id: string, @Body('presupuesto') presupuesto: number) {
-    const updated = this.investmentsService.updateManualBudget(id, presupuesto);
+  async updateManualBudget(@Param('id') id: string, @Body('presupuesto') presupuesto: number) {
+    const updated = await this.investmentsService.updateManualBudget(id, presupuesto);
     if (!updated) throw new NotFoundException('Manual investment line not found');
     return updated;
   }
 
   @Patch('manual/:id')
-  updateManualLine(@Param('id') id: string, @Body() dto: Partial<ManualInvestmentDto>) {
-    const updated = this.investmentsService.updateManualLine(id, dto);
+  async updateManualLine(@Param('id') id: string, @Body() dto: Partial<ManualInvestmentDto>) {
+    const updated = await this.investmentsService.updateManualLine(id, dto);
     if (!updated) throw new NotFoundException('Manual investment line not found');
     return updated;
   }

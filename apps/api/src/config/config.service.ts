@@ -51,6 +51,10 @@ export class ConfigService {
     return parseInt(process.env.SUPERMETRICS_SYNC_TIMEOUT_SECONDS || '300', 10);
   }
 
+  get databaseUrl(): string {
+    return process.env.DATABASE_URL || '';
+  }
+
   get apiPort(): number {
     return parseInt(process.env.API_PORT || '3333', 10);
   }

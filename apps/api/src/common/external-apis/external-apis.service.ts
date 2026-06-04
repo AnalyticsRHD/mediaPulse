@@ -120,20 +120,21 @@ export class ExternalApisService {
     return [];
   }
 
-  private parseSupermetricsResponse(
+  private async parseSupermetricsResponse(
     data: any,
     platform: string,
     scope: SupermetricsScope,
     dateRangeType?: string,
     forcedDate?: string
-  ): DailyMetrics[] {
+  ): Promise<DailyMetrics[]> {
     const table = this.extractSupermetricsTable(data);
     if (table.length < 2) return [];
 
     const headers = table[0].map((header) => this.normalizeHeader(String(header)));
     const rows = table.slice(1);
+    const metrics: DailyMetrics[] = [];
 
-    return rows.map((row, index) => {
+    for (const [index, row] of rows.entries()) {
       const record = headers.reduce<Record<string, any>>((acc, header, headerIndex) => {
         acc[header] = row[headerIndex];
         return acc;
@@ -141,12 +142,12 @@ export class ExternalApisService {
 
       const accountName = this.firstValue(record, ['account', 'accountname', 'account_name']);
       const referencia = this.firstValue(record, ['referencia', 'reference']) || this.inferReference(accountName) || accountName || 'Sin referencia';
-      const mapping = this.brandMappingService.resolve(referencia);
+      const mapping = await this.brandMappingService.resolve(referencia);
       const accountId = this.firstValue(record, ['accountid', 'account_id']);
       const campaignName = this.firstValue(record, ['campaign', 'campaignname', 'campaign_name']) || accountName || referencia;
       const campaignId = this.firstValue(record, ['campaignid', 'campaign_id']) || `${platform}-${accountId || this.normalizeHeader(referencia) || index}`;
 
-      return {
+      metrics.push({
         date: this.resolveMetricDate(record, dateRangeType, forcedDate, scope),
         cliente: mapping.cliente,
         marca: mapping.marca,
@@ -162,8 +163,10 @@ export class ExternalApisService {
         clicks: this.numberValue(this.firstValue(record, ['clicks'])),
         conversions: this.numberValue(this.firstValue(record, ['conversions'])),
         revenue: this.numberValue(this.firstValue(record, ['totalconversionvalue', 'total_conversion_value', 'revenue']))
-      };
-    });
+      });
+    }
+
+    return metrics;
   }
 
   private extractSupermetricsTable(data: any): any[][] {

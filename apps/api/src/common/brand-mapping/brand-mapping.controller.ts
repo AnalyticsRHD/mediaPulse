@@ -7,17 +7,17 @@ export class BrandMappingController {
   constructor(private readonly brandMappingService: BrandMappingService) {}
 
   @Get()
-  getAll() {
+  async getAll() {
     return this.brandMappingService.getAll();
   }
 
   @Get('clients')
-  getClients() {
+  async getClients() {
     return this.brandMappingService.getClients();
   }
 
   @Get('clients/:cliente/brands')
-  getBrandsByClient(@Param('cliente') cliente: string) {
+  async getBrandsByClient(@Param('cliente') cliente: string) {
     return this.brandMappingService.getBrandsByClient(cliente);
   }
 }
