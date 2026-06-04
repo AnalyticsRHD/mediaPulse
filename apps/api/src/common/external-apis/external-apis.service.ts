@@ -98,6 +98,8 @@ export class ExternalApisService {
     const aggregated = new Map<string, { advertiserId: string; accountName: string; spend: number }>();
 
     try {
+      const advertiserNames = await this.fetchTikTokAdvertiserNames(accessToken);
+
       for (const advertiserId of advertiserIds) {
         let page = 1;
         let totalPages = 1;
@@ -111,7 +113,7 @@ export class ExternalApisService {
                 advertiser_id: advertiserId,
                 report_type: 'BASIC',
                 data_level: 'AUCTION_ADVERTISER',
-                dimensions: JSON.stringify(['stat_time_day', 'advertiser_id', 'advertiser_name']),
+                dimensions: JSON.stringify(['stat_time_day', 'advertiser_id']),
                 metrics: JSON.stringify(['spend']),
                 start_date: startDate,
                 end_date: endDate,
@@ -135,7 +137,8 @@ export class ExternalApisService {
             const metrics = item.metrics || item.metric || item;
             const rawDate = String(dimensions.stat_time_day || dimensions.stat_time || startDate);
             const bucketDate = scope === 'monthly' ? this.monthStart(rawDate) : rawDate.slice(0, 10);
-            const accountName = dimensions.advertiser_name || item.advertiser_name || String(advertiserId);
+            const reportedAdvertiserId = String(dimensions.advertiser_id || advertiserId);
+            const accountName = advertiserNames.get(reportedAdvertiserId) || advertiserNames.get(String(advertiserId)) || String(advertiserId);
             const key = `${bucketDate}||${advertiserId}||${accountName}`;
             const existing = aggregated.get(key) ?? { advertiserId, accountName, spend: 0 };
             existing.spend += this.numberValue(metrics.spend ?? item.spend);
@@ -488,6 +491,36 @@ export class ExternalApisService {
 
   private round2(value: number): number {
     return Math.round(value * 100) / 100;
+  }
+
+  private async fetchTikTokAdvertiserNames(accessToken: string): Promise<Map<string, string>> {
+    const appId = this.configService.tiktokAppId;
+    const secret = this.configService.tiktokAppSecret;
+    const names = new Map<string, string>();
+
+    if (!appId || !secret) return names;
+
+    try {
+      const response = await axios.get(`${this.configService.tiktokApiBaseUrl}/oauth2/advertiser/get/`, {
+        headers: { 'Access-Token': accessToken },
+        params: {
+          app_id: appId,
+          secret
+        },
+        timeout: this.configService.tiktokSyncTimeoutSeconds * 1000
+      });
+
+      const list = response.data?.data?.list || [];
+      for (const item of list) {
+        if (item.advertiser_id) {
+          names.set(String(item.advertiser_id), String(item.advertiser_name || item.advertiser_id));
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Could not fetch TikTok advertiser names: ${this.axiosDetail(error)}`);
+    }
+
+    return names;
   }
 
   private warnMissingConfig(key: string, message: string): void {
