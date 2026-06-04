@@ -51,6 +51,64 @@ export class ConfigService {
     return parseInt(process.env.SUPERMETRICS_SYNC_TIMEOUT_SECONDS || '300', 10);
   }
 
+  get tiktokApiBaseUrl(): string {
+    return process.env.TIKTOK_API_BASE_URL || 'https://business-api.tiktok.com/open_api/v1.3';
+  }
+
+  get tiktokAccessToken(): string {
+    return this.cleanPlaceholder(process.env.TIKTOK_ACCESS_TOKEN || '');
+  }
+
+  get tiktokAdvertiserIds(): string[] {
+    return (process.env.TIKTOK_ADVERTISER_IDS || '')
+      .split(',')
+      .map((value) => this.cleanPlaceholder(value))
+      .filter(Boolean);
+  }
+
+  get tiktokSyncTimeoutSeconds(): number {
+    return parseInt(process.env.TIKTOK_SYNC_TIMEOUT_SECONDS || '60', 10);
+  }
+
+  get mercadoLibreAccessToken(): string {
+    return process.env.MERCADO_LIBRE_ACCESS_TOKEN || '';
+  }
+
+  get mercadoLibreAdvertiserIds(): string[] {
+    return (process.env.MERCADO_LIBRE_ADVERTISER_IDS || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  get mercadoLibreSourceSpreadsheetId(): string {
+    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_SOURCE_SPREADSHEET_ID || '');
+  }
+
+  get mercadoLibreRawSheets(): string[] {
+    const configured = process.env.MERCADO_LIBRE_RAW_SHEETS || [
+      'Quiksilver',
+      'Quiksilver - Display',
+      'Roxy',
+      'Roxy - Display',
+      'DC Shoes 3P',
+      'DC Shoes 3P - Display'
+    ].join(',');
+
+    return configured
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  get mercadoLibreGoogleSheetsApiKey(): string {
+    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_GOOGLE_SHEETS_API_KEY || process.env.GOOGLE_SHEETS_API_KEY || '');
+  }
+
+  get mercadoLibreSyncTimeoutSeconds(): number {
+    return parseInt(process.env.MERCADO_LIBRE_SYNC_TIMEOUT_SECONDS || '60', 10);
+  }
+
   get databaseUrl(): string {
     return process.env.DATABASE_URL || '';
   }
@@ -65,5 +123,12 @@ export class ConfigService {
 
   isProduction(): boolean {
     return this.nodeEnv === 'production';
+  }
+
+  private cleanPlaceholder(value: string): string {
+    const clean = value.trim();
+    if (!clean) return '';
+    if (/^(your_|tu_|advertiser_id_|placeholder)/i.test(clean)) return '';
+    return clean;
   }
 }

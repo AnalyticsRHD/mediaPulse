@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { MetricsService } from '../../modules/metrics/metrics.service';
-import { ExternalApisService, SupermetricsSource } from '../external-apis/external-apis.service';
+import { AdsMetricsSource, ExternalApisService, SupermetricsSource } from '../external-apis/external-apis.service';
 import { AirtableService } from '../airtable/airtable.service';
 
 @Injectable()
@@ -23,9 +23,9 @@ export class IngestionsSchedulerService {
       const yesterday = this.previousDate(today);
       const allMetrics = [];
 
-      for (const source of this.getSupermetricsSources()) {
-        const monthlyMetrics = await this.safeFetchSupermetricsMetrics(source, 'monthly', today);
-        const dailyMetrics = await this.safeFetchSupermetricsMetrics(source, 'daily', yesterday);
+      for (const source of this.getAdsSources()) {
+        const monthlyMetrics = await this.safeFetchAdsMetrics(source, 'monthly', today);
+        const dailyMetrics = await this.safeFetchAdsMetrics(source, 'daily', yesterday);
 
         allMetrics.push(...monthlyMetrics, ...dailyMetrics);
       }
@@ -98,6 +98,10 @@ export class IngestionsSchedulerService {
     return ['google', 'meta', 'linkedin'];
   }
 
+  private getAdsSources(): AdsMetricsSource[] {
+    return [...this.getSupermetricsSources(), 'tiktok', 'mercadolibre'];
+  }
+
   private async safeFetchSupermetricsMetrics(source: SupermetricsSource, scope: 'monthly' | 'daily', date: string) {
     try {
       const metrics = await this.externalApisService.fetchSupermetricsMetrics(source, scope, date);
@@ -107,6 +111,25 @@ export class IngestionsSchedulerService {
       this.logger.error(`Skipping ${source} ${scope} metrics after Supermetrics error`, error);
       return [];
     }
+  }
+
+  private async safeFetchAdsMetrics(source: AdsMetricsSource, scope: 'monthly' | 'daily', date: string) {
+    if (this.isSupermetricsSource(source)) {
+      return this.safeFetchSupermetricsMetrics(source, scope, date);
+    }
+
+    try {
+      const metrics = await this.externalApisService.fetchNativeAdsMetrics(source, scope, date);
+      this.logger.log(`Fetched ${metrics.length} ${source} ${scope} metrics`);
+      return metrics;
+    } catch (error) {
+      this.logger.error(`Skipping ${source} ${scope} metrics after API error`, error);
+      return [];
+    }
+  }
+
+  private isSupermetricsSource(source: AdsMetricsSource): source is SupermetricsSource {
+    return ['google', 'meta', 'linkedin'].includes(source);
   }
 
   private previousDate(date: string): string {

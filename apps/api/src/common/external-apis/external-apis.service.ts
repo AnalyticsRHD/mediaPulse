@@ -6,6 +6,8 @@ import { BrandMappingService } from '../brand-mapping/brand-mapping.service';
 
 export type SupermetricsSource = 'google' | 'meta' | 'linkedin';
 export type SupermetricsScope = 'monthly' | 'daily';
+export type NativeAdsSource = 'tiktok' | 'mercadolibre';
+export type AdsMetricsSource = SupermetricsSource | NativeAdsSource;
 
 type SupermetricsSourceConfig = {
   platform: string;
@@ -15,6 +17,7 @@ type SupermetricsSourceConfig = {
 @Injectable()
 export class ExternalApisService {
   private logger = new Logger('ExternalApisService');
+  private warnedMissingConfig = new Set<string>();
 
   constructor(
     private configService: ConfigService,
@@ -31,7 +34,7 @@ export class ExternalApisService {
     const queryJson = sourceConfig.queryJson;
 
     if (!apiKey || !queryJson) {
-      this.logger.warn(`Supermetrics ${source} query not configured.`);
+      this.warnMissingConfig(`supermetrics-${source}`, `Supermetrics ${source} query not configured.`);
       return [];
     }
 
@@ -57,19 +60,205 @@ export class ExternalApisService {
 
       return this.parseSupermetricsResponse(response.data, sourceConfig.platform, scope, datedQuery.date_range_type, date);
     } catch (error) {
-      this.logger.error(`Error fetching Supermetrics ${source} metrics:`, error);
       if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const detail = status ? `status ${status}` : error.message;
+        const detail = this.axiosDetail(error);
+        this.logger.error(`Supermetrics ${source} ${scope} sync failed: ${detail}`);
         throw new BadGatewayException(`Supermetrics ${source} sync failed (${detail})`);
       }
 
+      this.logger.error(`Supermetrics ${source} ${scope} sync failed: ${error instanceof Error ? error.message : String(error)}`);
       throw new ServiceUnavailableException(`Supermetrics ${source} sync failed`);
     }
   }
 
   async fetchSupermetricsFacebookAds(date?: string): Promise<DailyMetrics[]> {
     return this.fetchSupermetricsMetrics('meta', date ? 'daily' : 'monthly', date);
+  }
+
+  async fetchNativeAdsMetrics(
+    source: NativeAdsSource,
+    scope: SupermetricsScope,
+    date = this.today()
+  ): Promise<DailyMetrics[]> {
+    if (source === 'tiktok') return this.fetchTikTokMetrics(scope, date);
+    return this.fetchMercadoLibreMetrics(scope, date);
+  }
+
+  async fetchTikTokMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+    const accessToken = this.configService.tiktokAccessToken;
+    const advertiserIds = this.configService.tiktokAdvertiserIds;
+
+    if (!accessToken || advertiserIds.length === 0) {
+      this.warnMissingConfig('tiktok', 'TikTok access token or advertiser ids not configured.');
+      return [];
+    }
+
+    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const endDate = date;
+    const aggregated = new Map<string, { advertiserId: string; accountName: string; spend: number }>();
+
+    try {
+      for (const advertiserId of advertiserIds) {
+        let page = 1;
+        let totalPages = 1;
+
+        do {
+          const response = await axios.get(
+            `${this.configService.tiktokApiBaseUrl}/report/integrated/get/`,
+            {
+              headers: { 'Access-Token': accessToken },
+              params: {
+                advertiser_id: advertiserId,
+                report_type: 'BASIC',
+                data_level: 'AUCTION_ADVERTISER',
+                dimensions: JSON.stringify(['stat_time_day', 'advertiser_id', 'advertiser_name']),
+                metrics: JSON.stringify(['spend']),
+                start_date: startDate,
+                end_date: endDate,
+                page,
+                page_size: 1000
+              },
+              timeout: this.configService.tiktokSyncTimeoutSeconds * 1000
+            }
+          );
+
+          const data = response.data;
+          if (data?.code !== undefined && data.code !== 0) {
+            throw new BadGatewayException(`TikTok sync failed (${data.message || `code ${data.code}`})`);
+          }
+
+          const list = data?.data?.list || [];
+          totalPages = Number(data?.data?.page_info?.total_page || 1) || 1;
+
+          for (const item of list) {
+            const dimensions = item.dimensions || item.dimension || item;
+            const metrics = item.metrics || item.metric || item;
+            const rawDate = String(dimensions.stat_time_day || dimensions.stat_time || startDate);
+            const bucketDate = scope === 'monthly' ? this.monthStart(rawDate) : rawDate.slice(0, 10);
+            const accountName = dimensions.advertiser_name || item.advertiser_name || String(advertiserId);
+            const key = `${bucketDate}||${advertiserId}||${accountName}`;
+            const existing = aggregated.get(key) ?? { advertiserId, accountName, spend: 0 };
+            existing.spend += this.numberValue(metrics.spend ?? item.spend);
+            aggregated.set(key, existing);
+          }
+
+          page += 1;
+        } while (page <= totalPages);
+      }
+
+      const out: DailyMetrics[] = [];
+      let index = 0;
+
+      for (const [key, value] of aggregated.entries()) {
+        const [metricDate] = key.split('||');
+        const referencia = this.inferReference(value.accountName) || value.accountName || value.advertiserId;
+        const mapping = await this.brandMappingService.resolve(referencia);
+
+        out.push({
+          date: metricDate,
+          cliente: mapping.cliente,
+          marca: mapping.marca,
+          referencia,
+          accountId: value.advertiserId,
+          accountName: value.accountName,
+          plataforma: 'TikTok',
+          campaignId: `TikTok-${value.advertiserId}-${scope}-${metricDate}-${index}`,
+          campaignName: value.accountName,
+          granularity: scope,
+          spend: this.round2(value.spend),
+          impressions: 0,
+          clicks: 0,
+          conversions: 0,
+          revenue: 0
+        });
+        index += 1;
+      }
+
+      return out;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const detail = this.axiosDetail(error);
+        this.logger.error(`TikTok ${scope} sync failed: ${detail}`);
+        throw new BadGatewayException(`TikTok sync failed (${detail})`);
+      }
+
+      if (error instanceof BadGatewayException) throw error;
+      this.logger.error(`TikTok ${scope} sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new ServiceUnavailableException('TikTok sync failed');
+    }
+  }
+
+  async fetchMercadoLibreMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+    const spreadsheetId = this.configService.mercadoLibreSourceSpreadsheetId;
+    const rawSheets = this.configService.mercadoLibreRawSheets;
+
+    if (!spreadsheetId || rawSheets.length === 0) {
+      this.warnMissingConfig('mercadolibre', 'Mercado Libre source spreadsheet or raw sheets not configured.');
+      return [];
+    }
+
+    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const endDate = date;
+    const aggregated = new Map<string, { accountName: string; spend: number }>();
+
+    try {
+      for (const sheetName of rawSheets) {
+        const rows = await this.fetchGoogleSheetRows(spreadsheetId, sheetName);
+        const accountName = sheetName.replace(/\s-\sDisplay$/i, '').trim();
+
+        for (const row of rows.slice(1)) {
+          const rowDate = this.normalizeSheetDate(row[2]);
+          if (!rowDate || rowDate < startDate || rowDate > endDate) continue;
+
+          const bucketDate = scope === 'monthly' ? this.monthStart(rowDate) : rowDate;
+          const key = `${bucketDate}||${accountName}`;
+          const existing = aggregated.get(key) ?? { accountName, spend: 0 };
+          existing.spend += this.numberValue(row[5]);
+          aggregated.set(key, existing);
+        }
+      }
+
+      const out: DailyMetrics[] = [];
+      let index = 0;
+
+      for (const [key, value] of aggregated.entries()) {
+        const [metricDate] = key.split('||');
+        const referencia = value.accountName;
+        const mapping = await this.brandMappingService.resolve(referencia);
+
+        out.push({
+          date: metricDate,
+          cliente: mapping.cliente,
+          marca: mapping.marca,
+          referencia,
+          accountName: value.accountName,
+          plataforma: 'Merc. Libre',
+          campaignId: `MercadoLibre-${this.normalizeHeader(value.accountName)}-${scope}-${metricDate}-${index}`,
+          campaignName: value.accountName,
+          granularity: scope,
+          spend: this.round2(value.spend),
+          impressions: 0,
+          clicks: 0,
+          conversions: 0,
+          revenue: 0
+        });
+        index += 1;
+      }
+
+      return out.sort((a, b) => {
+        if (a.date === b.date) return (a.accountName || '').localeCompare(b.accountName || '');
+        return a.date.localeCompare(b.date);
+      });
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const detail = this.axiosDetail(error);
+        this.logger.error(`Mercado Libre ${scope} sync failed: ${detail}`);
+        throw new BadGatewayException(`Mercado Libre sync failed (${detail})`);
+      }
+
+      this.logger.error(`Mercado Libre ${scope} sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new ServiceUnavailableException('Mercado Libre sync failed');
+    }
   }
 
   async fetchMetaMetrics(accountId: string, dateFrom: string, dateTo: string): Promise<DailyMetrics[]> {
@@ -295,6 +484,144 @@ export class ExternalApisService {
 
   private monthStart(date: string): string {
     return `${date.slice(0, 7)}-01`;
+  }
+
+  private round2(value: number): number {
+    return Math.round(value * 100) / 100;
+  }
+
+  private warnMissingConfig(key: string, message: string): void {
+    if (this.warnedMissingConfig.has(key)) return;
+    this.warnedMissingConfig.add(key);
+    this.logger.warn(message);
+  }
+
+  private axiosDetail(error: any): string {
+    if (!axios.isAxiosError(error)) return error instanceof Error ? error.message : String(error);
+
+    const status = error.response?.status;
+    const statusText = error.response?.statusText;
+    const responseMessage = this.extractResponseMessage(error.response?.data);
+    const parts = [
+      status ? `status ${status}` : '',
+      statusText || '',
+      responseMessage || error.message
+    ].filter(Boolean);
+
+    return parts.join(' - ');
+  }
+
+  private extractResponseMessage(data: any): string {
+    if (!data) return '';
+    if (typeof data === 'string') return data.slice(0, 240);
+    if (typeof data.message === 'string') return data.message;
+    if (typeof data.error === 'string') return data.error;
+    try {
+      return JSON.stringify(data).slice(0, 240);
+    } catch {
+      return '';
+    }
+  }
+
+  private async fetchGoogleSheetRows(spreadsheetId: string, sheetName: string): Promise<any[][]> {
+    const apiKey = this.configService.mercadoLibreGoogleSheetsApiKey;
+    const timeout = this.configService.mercadoLibreSyncTimeoutSeconds * 1000;
+
+    if (apiKey) {
+      const range = `'${sheetName.replace(/'/g, "''")}'!A:L`;
+      const response = await axios.get(
+        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`,
+        {
+          params: { key: apiKey },
+          timeout
+        }
+      );
+
+      return response.data?.values || [];
+    }
+
+    const response = await axios.get(
+      `https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/gviz/tq`,
+      {
+        params: {
+          tqx: 'out:csv',
+          sheet: sheetName
+        },
+        responseType: 'text',
+        timeout
+      }
+    );
+
+    return this.parseCsv(String(response.data || ''));
+  }
+
+  private parseCsv(csv: string): string[][] {
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let cell = '';
+    let inQuotes = false;
+
+    for (let index = 0; index < csv.length; index += 1) {
+      const char = csv[index];
+      const next = csv[index + 1];
+
+      if (char === '"' && inQuotes && next === '"') {
+        cell += '"';
+        index += 1;
+        continue;
+      }
+
+      if (char === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+
+      if (char === ',' && !inQuotes) {
+        row.push(cell);
+        cell = '';
+        continue;
+      }
+
+      if ((char === '\n' || char === '\r') && !inQuotes) {
+        if (char === '\r' && next === '\n') index += 1;
+        row.push(cell);
+        if (row.some((value) => value !== '')) rows.push(row);
+        row = [];
+        cell = '';
+        continue;
+      }
+
+      cell += char;
+    }
+
+    row.push(cell);
+    if (row.some((value) => value !== '')) rows.push(row);
+
+    return rows;
+  }
+
+  private normalizeSheetDate(value: any): string {
+    if (value === undefined || value === null || value === '') return '';
+
+    if (typeof value === 'number' || /^\d+(\.\d+)?$/.test(String(value).trim())) {
+      const serial = Number(value);
+      if (serial > 20000) {
+        const epoch = Date.UTC(1899, 11, 30);
+        return new Date(epoch + serial * 86400000).toISOString().slice(0, 10);
+      }
+    }
+
+    const raw = String(value).trim();
+    const ymd = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`;
+
+    const dmy = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+
+    return '';
   }
 
   private getMockMetaMetrics(): DailyMetrics[] {

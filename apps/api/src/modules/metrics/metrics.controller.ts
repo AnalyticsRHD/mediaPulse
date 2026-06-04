@@ -1,7 +1,13 @@
 import { Controller, Get, Post, Put, Delete, Param, Body, Query } from '@nestjs/common';
 import { MetricsService } from './metrics.service';
 import { CreateDailyMetricsDto, UpdateDailyMetricsDto } from './dto/create-daily-metrics.dto';
-import { ExternalApisService, SupermetricsScope, SupermetricsSource } from '../../common/external-apis/external-apis.service';
+import {
+  AdsMetricsSource,
+  ExternalApisService,
+  NativeAdsSource,
+  SupermetricsScope,
+  SupermetricsSource
+} from '../../common/external-apis/external-apis.service';
 
 @Controller('metrics')
 export class MetricsController {
@@ -104,6 +110,29 @@ export class MetricsController {
     };
   }
 
+  @Post('sync/monthly-and-daily')
+  async syncMonthlyAndDaily(
+    @Query('source') source: AdsMetricsSource | 'all' = 'all',
+    @Query('date') date?: string
+  ) {
+    const targetDate = date || new Date().toISOString().slice(0, 10);
+    const yesterday = this.previousDate(targetDate);
+    const sources = source === 'all' ? this.getAllAdsSources() : [source];
+    const results = [];
+
+    for (const currentSource of sources) {
+      results.push(await this.safeSyncAdsSource(currentSource, 'monthly', targetDate));
+      results.push(await this.safeSyncAdsSource(currentSource, 'daily', yesterday));
+    }
+
+    return {
+      date: targetDate,
+      dailyDate: yesterday,
+      totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
+      results
+    };
+  }
+
   private async syncSupermetricsSource(source: SupermetricsSource, scope: SupermetricsScope, date?: string) {
     const metrics = await this.externalApisService.fetchSupermetricsMetrics(source, scope, date);
 
@@ -141,6 +170,57 @@ export class MetricsController {
         metrics: []
       };
     }
+  }
+
+  private async syncNativeAdsSource(source: NativeAdsSource, scope: SupermetricsScope, date?: string) {
+    const metrics = await this.externalApisService.fetchNativeAdsMetrics(source, scope, date);
+
+    for (const metric of metrics) {
+      this.metricsService.upsertByDateAndCampaign(
+        metric.date,
+        metric.campaignId,
+        metric.plataforma,
+        metric
+      );
+    }
+
+    return {
+      source,
+      scope,
+      date: date || new Date().toISOString().slice(0, 10),
+      synced: metrics.length,
+      metrics
+    };
+  }
+
+  private async safeSyncAdsSource(source: AdsMetricsSource, scope: SupermetricsScope, date?: string) {
+    try {
+      if (this.isSupermetricsSource(source)) {
+        return await this.syncSupermetricsSource(source, scope, date);
+      }
+
+      return await this.syncNativeAdsSource(source, scope, date);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      return {
+        source,
+        scope,
+        date: date || new Date().toISOString().slice(0, 10),
+        synced: 0,
+        status: 'failed',
+        error: message,
+        metrics: []
+      };
+    }
+  }
+
+  private getAllAdsSources(): AdsMetricsSource[] {
+    return ['google', 'meta', 'linkedin', 'tiktok', 'mercadolibre'];
+  }
+
+  private isSupermetricsSource(source: AdsMetricsSource): source is SupermetricsSource {
+    return ['google', 'meta', 'linkedin'].includes(source);
   }
 
   private previousDate(date: string): string {

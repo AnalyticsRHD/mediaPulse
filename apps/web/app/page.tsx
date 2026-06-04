@@ -226,6 +226,29 @@ function getObjectiveOptions(platform: string) {
   return [...baseObjectives, ...googleObjectives];
 }
 
+function normalizePlatformName(platform: string) {
+  return platform
+    .toLowerCase()
+    .replace(/\./g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function formatPlatformLabel(platform: string) {
+  const normalized = normalizePlatformName(platform);
+  if (normalized === 'merc-libre' || normalized === 'mercado-libre') return 'M.Libre';
+  if (normalized === 'linkedin') return 'LinkedIn';
+  if (normalized === 'tiktok' || normalized === 'tik-tok') return 'TikTok';
+  return platform;
+}
+
+function platformClassName(platform: string) {
+  const normalized = normalizePlatformName(platform);
+  if (normalized === 'merc-libre' || normalized === 'mercado-libre') return 'platform-merc-libre';
+  if (normalized === 'tik-tok') return 'platform-tiktok';
+  return `platform-${normalized}`;
+}
+
 function getBrandTotals(lines: InvestmentLine[]) {
   const totals = new Map<string, { marca: string; presupuesto: number; fcProyectada: number }>();
 
@@ -427,7 +450,7 @@ export default function Home() {
     setSyncing(true);
     try {
       setErrorMessage('');
-      await requestJson(`${API_BASE}/metrics/sync/supermetrics/monthly-and-daily?source=all&date=${selectedRange.endDate}`, {
+      await requestJson(`${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${selectedRange.endDate}`, {
         method: 'POST'
       });
       await loadInvestments();
@@ -729,7 +752,7 @@ export default function Home() {
                     <td>{line.anunciante}</td>
                     <td>{line.marca ?? '-'}</td>
                     <td>{line.moneda}</td>
-                    <td><span className={`platform platform-${line.plataforma.toLowerCase().replace(/\s|\./g, '-')}`}>{line.plataforma}</span></td>
+                    <td><span className={`platform ${platformClassName(line.plataforma)}`}>{formatPlatformLabel(line.plataforma)}</span></td>
                     <td>{line.objetivo}</td>
                     <td>{formatMoney(line.presupuesto, line.moneda)}</td>
                     <td>{formatMoney(line.consumo, line.moneda)}</td>

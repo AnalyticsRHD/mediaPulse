@@ -434,11 +434,16 @@ tbody tr:nth-child(even) {
 .platform {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 74px;
   min-height: 26px;
   border-radius: 6px;
   color: #fff;
+  font-size: 13px;
   font-weight: 800;
-  padding: 0 8px;
+  line-height: 1;
+  padding: 0 6px;
+  white-space: nowrap;
 }
 
 .platform-meta {
@@ -450,12 +455,16 @@ tbody tr:nth-child(even) {
 }
 
 .platform-merc-libre {
-  background: #f3bd4f;
-  color: #251605;
+  background: #f5cd2f;
+  color: #fff;
 }
 
 .platform-tiktok {
-  background: #111827;
+  background: #050505;
+}
+
+.platform-linkedin {
+  background: #123a6f;
 }
 
 .empty {
