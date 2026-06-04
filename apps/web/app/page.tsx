@@ -32,6 +32,30 @@ type InvestmentCurrency = typeof currencies[number];
 type InvestmentStatus = typeof investmentStatuses[number];
 type DatePreset = typeof datePresetOptions[number]['value'];
 type DateRange = { startDate: string; endDate: string };
+type ControlFilterKey = 'anunciante' | 'marca' | 'moneda' | 'plataforma' | 'objetivo';
+type ControlFilters = Record<ControlFilterKey, string>;
+type SortDirection = 'asc' | 'desc';
+type SortKey =
+  | 'presupuesto'
+  | 'consumo'
+  | 'porcentajeConsumo'
+  | 'consumoRestante'
+  | 'presupuestoDaily'
+  | 'nuevoPresupuestoDiario'
+  | 'desvio'
+  | 'consumoDia'
+  | 'resultadosProyectados'
+  | 'fcProyectada';
+
+type ControlSort = {
+  key: SortKey;
+  direction: SortDirection;
+} | null;
+
+type SelectOption = {
+  label: string;
+  value: string;
+};
 
 type InvestmentLine = {
   id: string;
@@ -129,6 +153,27 @@ const defaultForm: ManualForm = {
   mes: currentDate.slice(0, 7)
 };
 
+const emptyControlFilters: ControlFilters = {
+  anunciante: '',
+  marca: '',
+  moneda: '',
+  plataforma: '',
+  objetivo: ''
+};
+
+const sortLabels: Record<SortKey, string> = {
+  presupuesto: 'Presupuesto',
+  consumo: 'Consumo',
+  porcentajeConsumo: '% Consumo',
+  consumoRestante: 'Consumo restante',
+  presupuestoDaily: 'Presupuesto daily',
+  nuevoPresupuestoDiario: 'Nuevo presupuesto diario',
+  desvio: 'Desvio',
+  consumoDia: 'Consumo dia',
+  resultadosProyectados: 'Resultados proyectados',
+  fcProyectada: 'FC proyectada'
+};
+
 function getDateRange(preset: DatePreset, customStart: string, customEnd: string) {
   const today = todayDate();
 
@@ -212,6 +257,28 @@ function getClientTotals(lines: InvestmentLine[]) {
   return Array.from(totals.values()).sort((a, b) => a.cliente.localeCompare(b.cliente));
 }
 
+function getControlFilterOptions(lines: InvestmentLine[]): Record<ControlFilterKey, string[]> {
+  return {
+    anunciante: uniqueValues(lines.map((line) => line.anunciante)),
+    marca: uniqueValues(lines.map((line) => line.marca ?? '')),
+    moneda: uniqueValues(lines.map((line) => line.moneda)),
+    plataforma: uniqueValues(lines.map((line) => line.plataforma)),
+    objetivo: uniqueValues(lines.map((line) => line.objetivo))
+  };
+}
+
+function uniqueValues(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+
+function getDeviationClass(value: number) {
+  const percent = value * 100;
+  if (percent >= 5 || percent <= -5) return 'deviation-cell danger';
+  if ((percent >= 3 && percent <= 4) || (percent <= -3 && percent >= -4)) return 'deviation-cell warning';
+  if (percent >= -3 && percent <= 3) return 'deviation-cell good';
+  return 'deviation-cell';
+}
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'control' | 'manual'>('control');
   const [data, setData] = useState<InvestmentResponse | null>(null);
@@ -231,6 +298,10 @@ export default function Home() {
   const [selectedDeleteIds, setSelectedDeleteIds] = useState<string[]>([]);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [controlFilters, setControlFilters] = useState<ControlFilters>(emptyControlFilters);
+  const [openControlFilter, setOpenControlFilter] = useState<ControlFilterKey | null>(null);
+  const [controlSort, setControlSort] = useState<ControlSort>(null);
+  const [openSelectId, setOpenSelectId] = useState<string | null>(null);
   const [previewClientFilter, setPreviewClientFilter] = useState('');
   const [previewBrandFilter, setPreviewBrandFilter] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -241,6 +312,23 @@ export default function Home() {
   );
   const clients = useMemo(() => Object.keys(brandCatalog).sort(), [brandCatalog]);
   const selectedBrands = useMemo(() => brandCatalog[form.anunciante] ?? [], [brandCatalog, form.anunciante]);
+  const controlFilterOptions = useMemo(() => getControlFilterOptions(data?.lines ?? []), [data]);
+  const filteredControlLines = useMemo(() => {
+    const lines = (data?.lines ?? []).filter((line) => (
+      (!controlFilters.anunciante || line.anunciante === controlFilters.anunciante)
+      && (!controlFilters.marca || (line.marca ?? '') === controlFilters.marca)
+      && (!controlFilters.moneda || line.moneda === controlFilters.moneda)
+      && (!controlFilters.plataforma || line.plataforma === controlFilters.plataforma)
+      && (!controlFilters.objetivo || line.objetivo === controlFilters.objetivo)
+    ));
+
+    if (!controlSort) return lines;
+
+    return [...lines].sort((a, b) => {
+      const result = Number(a[controlSort.key] ?? 0) - Number(b[controlSort.key] ?? 0);
+      return controlSort.direction === 'asc' ? result : -result;
+    });
+  }, [data, controlFilters, controlSort]);
   const previewBrands = useMemo(() => {
     const lines = manualData?.lines ?? [];
     return Array.from(new Set(
@@ -435,6 +523,34 @@ export default function Home() {
     }
   }
 
+  async function updateGroupStatus(lines: InvestmentLine[], status: InvestmentStatus) {
+    const changedLines = lines.filter((line) => line.status !== status);
+    if (changedLines.length === 0) return;
+
+    setErrorMessage('');
+    try {
+      await Promise.all(changedLines.map((line) => requestJson(`${API_BASE}/investments/manual/${line.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          anunciante: line.anunciante,
+          marca: line.marca ?? '',
+          moneda: line.moneda,
+          plataforma: line.plataforma,
+          objetivo: line.objetivo,
+          presupuesto: line.presupuesto,
+          costoPorResultado: line.costoPorResultado,
+          tktPromedio: line.tktPromedio,
+          status
+        })
+      })));
+      await loadInvestments();
+      await loadManualPreview();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudo actualizar el status');
+    }
+  }
+
   function startLineEdit(line: InvestmentLine) {
     setDeleteMode(false);
     setSelectedDeleteIds([]);
@@ -506,6 +622,8 @@ export default function Home() {
             range={selectedRange}
             customStartDate={customStartDate}
             customEndDate={customEndDate}
+            openSelectId={openSelectId}
+            onOpenSelect={setOpenSelectId}
             onPresetChange={setDatePreset}
             onCustomStartChange={setCustomStartDate}
             onCustomEndChange={setCustomEndDate}
@@ -534,30 +652,79 @@ export default function Home() {
             loading={loading}
             currency={summaryCurrency}
             onCurrencyChange={setSummaryCurrency}
+            openSelectId={openSelectId}
+            onOpenSelect={setOpenSelectId}
           />
+          <div className="control-toolbar">
+            <button className="secondary-button" type="button" onClick={() => {
+              setControlFilters(emptyControlFilters);
+              setControlSort(null);
+            }}>
+              Limpiar filtros
+            </button>
+          </div>
           <div className="table-wrap">
             <table className="control-table">
               <thead>
                 <tr>
-                  <th>Anunciante</th>
-                  <th>Marca</th>
-                  <th>Moneda</th>
-                  <th>Plataforma</th>
-                  <th>Objetivo</th>
-                  <th>Presupuesto</th>
-                  <th>Consumo</th>
-                  <th>% Consumo</th>
-                  <th>Consumo restante</th>
-                  <th>Presupuesto daily</th>
-                  <th>Nuevo presupuesto diario</th>
-                  <th>Desvio</th>
-                  <th>Consumo dia</th>
-                  <th>Resultados proyectados</th>
-                  <th>FC proyectada</th>
+                  <FilterHeader
+                    filterKey="anunciante"
+                    label="Anunciante"
+                    value={controlFilters.anunciante}
+                    options={controlFilterOptions.anunciante}
+                    openFilter={openControlFilter}
+                    onToggle={setOpenControlFilter}
+                    onChange={(value) => setControlFilters((current) => ({ ...current, anunciante: value }))}
+                  />
+                  <FilterHeader
+                    filterKey="marca"
+                    label="Marca"
+                    value={controlFilters.marca}
+                    options={controlFilterOptions.marca}
+                    openFilter={openControlFilter}
+                    onToggle={setOpenControlFilter}
+                    onChange={(value) => setControlFilters((current) => ({ ...current, marca: value }))}
+                  />
+                  <FilterHeader
+                    filterKey="moneda"
+                    label="Moneda"
+                    value={controlFilters.moneda}
+                    options={controlFilterOptions.moneda}
+                    openFilter={openControlFilter}
+                    onToggle={setOpenControlFilter}
+                    onChange={(value) => setControlFilters((current) => ({ ...current, moneda: value }))}
+                  />
+                  <FilterHeader
+                    filterKey="plataforma"
+                    label="Plataforma"
+                    value={controlFilters.plataforma}
+                    options={controlFilterOptions.plataforma}
+                    openFilter={openControlFilter}
+                    onToggle={setOpenControlFilter}
+                    onChange={(value) => setControlFilters((current) => ({ ...current, plataforma: value }))}
+                  />
+                  <FilterHeader
+                    filterKey="objetivo"
+                    label="Objetivo"
+                    value={controlFilters.objetivo}
+                    options={controlFilterOptions.objetivo}
+                    openFilter={openControlFilter}
+                    onToggle={setOpenControlFilter}
+                    onChange={(value) => setControlFilters((current) => ({ ...current, objetivo: value }))}
+                  />
+                  {Object.entries(sortLabels).map(([key, label]) => (
+                    <SortHeader
+                      key={key}
+                      label={label}
+                      sortKey={key as SortKey}
+                      currentSort={controlSort}
+                      onChange={setControlSort}
+                    />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {data?.lines.map((line) => (
+                {filteredControlLines.map((line) => (
                   <tr key={line.id}>
                     <td>{line.anunciante}</td>
                     <td>{line.marca ?? '-'}</td>
@@ -570,13 +737,13 @@ export default function Home() {
                     <td className={line.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(line.consumoRestante, line.moneda)}</td>
                     <td>{formatMoney(line.presupuestoDaily, line.moneda)}</td>
                     <td>{formatMoney(line.nuevoPresupuestoDiario, line.moneda)}</td>
-                    <td className={line.desvio < 0 ? 'negative' : ''}>{Math.round(line.desvio * 100)}%</td>
+                    <td className={getDeviationClass(line.desvio)}>{Math.round(line.desvio * 100)}%</td>
                     <td>{formatMoney(line.consumoDia, line.moneda)}</td>
                     <td>{integer.format(line.resultadosProyectados)}</td>
                     <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
                   </tr>
                 ))}
-                {!loading && data?.lines.length === 0 ? (
+                {!loading && filteredControlLines.length === 0 ? (
                   <tr>
                     <td colSpan={15} className="empty">No hay inversiones cargadas para este mes.</td>
                   </tr>
@@ -588,13 +755,16 @@ export default function Home() {
       ) : (
         <section className="manual-grid">
           <form className="manual-form" onSubmit={handleSubmit}>
-            <h2>Nueva linea manual</h2>
+            <h2>Nuevo Presupuesto</h2>
             <div className="form-grid">
               <SelectField
                 label="Anunciante"
                 value={form.anunciante}
                 options={clients}
                 placeholder="Selecciona un cliente"
+                id="manual-anunciante"
+                openSelectId={openSelectId}
+                onOpenSelect={setOpenSelectId}
                 onChange={(value) => {
                   const firstBrand = brandCatalog[value]?.[0] ?? '';
                   setForm({ ...form, anunciante: value, marca: firstBrand });
@@ -606,25 +776,31 @@ export default function Home() {
                 options={selectedBrands}
                 placeholder="Selecciona una marca"
                 disabled={!form.anunciante}
+                id="manual-marca"
+                openSelectId={openSelectId}
+                onOpenSelect={setOpenSelectId}
                 onChange={(value) => setForm({ ...form, marca: value })}
               />
-              <SelectField label="Moneda" value={form.moneda} options={[...currencies]} onChange={(value) => setForm({ ...form, moneda: value as InvestmentCurrency })} />
+              <SelectField label="Moneda" value={form.moneda} options={[...currencies]} id="manual-moneda" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, moneda: value as InvestmentCurrency })} />
               <SelectField
                 label="Plataforma"
                 value={form.plataforma}
                 options={['META', 'Google', 'Merc. Libre', 'TikTok']}
+                id="manual-plataforma"
+                openSelectId={openSelectId}
+                onOpenSelect={setOpenSelectId}
                 onChange={(value) => {
                   const options = getObjectiveOptions(value);
                   setForm({ ...form, plataforma: value, objetivo: options.includes(form.objetivo) ? form.objetivo : options[0] });
                 }}
               />
-              <SelectField label="Objetivo" value={form.objetivo} options={objectiveOptions} onChange={(value) => setForm({ ...form, objetivo: value })} />
+              <SelectField label="Objetivo" value={form.objetivo} options={objectiveOptions} id="manual-objetivo" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, objetivo: value })} />
               <Field label="Presupuesto" type="number" value={form.presupuesto} onChange={(value) => setForm({ ...form, presupuesto: value })} />
               <Field label="Costo x resultado" type="number" value={form.costoPorResultado} onChange={(value) => setForm({ ...form, costoPorResultado: value })} />
               <Field label="TKT prom" type="number" value={form.tktPromedio} onChange={(value) => setForm({ ...form, tktPromedio: value })} />
             </div>
             <button className="primary-button" type="submit" disabled={saving || !form.anunciante || !form.marca}>
-              {saving ? 'Guardando...' : 'Agregar linea'}
+              {saving ? 'Guardando...' : 'Agregar'}
             </button>
           </form>
 
@@ -637,6 +813,9 @@ export default function Home() {
                   value={previewClientFilter}
                   options={clients}
                   placeholder="Todos"
+                  id="preview-cliente"
+                  openSelectId={openSelectId}
+                  onOpenSelect={setOpenSelectId}
                   onChange={(value) => {
                     setPreviewClientFilter(value);
                     setPreviewBrandFilter('');
@@ -648,6 +827,9 @@ export default function Home() {
                   options={previewBrands}
                   placeholder="Todas"
                   disabled={!previewClientFilter && previewBrands.length === 0}
+                  id="preview-marca"
+                  openSelectId={openSelectId}
+                  onOpenSelect={setOpenSelectId}
                   onChange={setPreviewBrandFilter}
                 />
               </div>
@@ -660,12 +842,23 @@ export default function Home() {
             {groupedLines.map((group) => {
               const clientTotals = getClientTotals(group.lines);
               const brandTotals = getBrandTotals(group.lines);
+              const groupStatus = group.lines.every((line) => line.status === 'PRESUPUESTO_OK')
+                ? 'PRESUPUESTO_OK'
+                : 'EN_PROCESO';
               return (
                 <section className="preview-block" key={group.key}>
                   <div className="preview-title">
                     <div className="preview-title-main">
                       <strong>{group.lines[0].anunciante}</strong>
-                      <span>{group.lines[0].moneda}</span>
+                      <span className="currency-badge">{group.lines[0].moneda}</span>
+                      <StatusToggle
+                        value={groupStatus}
+                        onChange={(status) => updateGroupStatus(group.lines, status)}
+                        compact
+                        id={`group-status-${group.key}`}
+                        openSelectId={openSelectId}
+                        onOpenSelect={setOpenSelectId}
+                      />
                     </div>
                     <div className="preview-title-actions">
                       {deleteMode ? (
@@ -697,7 +890,6 @@ export default function Home() {
                     <thead>
                       <tr>
                         <th>Marca</th>
-                        <th>Status</th>
                         <th>Plataforma</th>
                         <th>Objetivo</th>
                         <th>Presupuesto</th>
@@ -718,6 +910,9 @@ export default function Home() {
                                 label=""
                                 value={lineDraft.marca}
                                 options={brandCatalog[lineDraft.anunciante] ?? []}
+                                id={`edit-marca-${line.id}`}
+                                openSelectId={openSelectId}
+                                onOpenSelect={setOpenSelectId}
                                 onChange={(value) => setLineDraft({ ...lineDraft, marca: value })}
                               />
                             ) : (
@@ -736,21 +931,13 @@ export default function Home() {
                           </td>
                           <td>
                             {editingLineId === line.id && lineDraft ? (
-                              <StatusToggle value={lineDraft.status} onChange={(status) => setLineDraft({ ...lineDraft, status })} compact />
-                            ) : (
-                              <StatusToggle
-                                value={line.status}
-                                onChange={(status) => updateLineStatus(line, status)}
-                                compact
-                              />
-                            )}
-                          </td>
-                          <td>
-                            {editingLineId === line.id && lineDraft ? (
                               <SelectField
                                 label=""
                                 value={lineDraft.plataforma}
                                 options={['META', 'Google', 'Merc. Libre', 'TikTok']}
+                                id={`edit-plataforma-${line.id}`}
+                                openSelectId={openSelectId}
+                                onOpenSelect={setOpenSelectId}
                                 onChange={(value) => {
                                   const options = getObjectiveOptions(value);
                                   setLineDraft({ ...lineDraft, plataforma: value, objetivo: options.includes(lineDraft.objetivo) ? lineDraft.objetivo : options[0] });
@@ -764,6 +951,9 @@ export default function Home() {
                                 label=""
                                 value={lineDraft.objetivo}
                                 options={getObjectiveOptions(lineDraft.plataforma)}
+                                id={`edit-objetivo-${line.id}`}
+                                openSelectId={openSelectId}
+                                onOpenSelect={setOpenSelectId}
                                 onChange={(value) => setLineDraft({ ...lineDraft, objetivo: value })}
                               />
                             ) : line.objetivo}
@@ -827,7 +1017,6 @@ export default function Home() {
                           <td>Total marca: {item.marca}</td>
                           <td></td>
                           <td></td>
-                          <td></td>
                           <td>{formatMoney(item.presupuesto, group.lines[0].moneda)}</td>
                           <td></td>
                           <td></td>
@@ -840,7 +1029,6 @@ export default function Home() {
                       {clientTotals.map((item) => (
                         <tr key={item.cliente}>
                           <td>Total cliente: {item.cliente}</td>
-                          <td></td>
                           <td></td>
                           <td></td>
                           <td>{formatMoney(item.presupuesto, group.lines[0].moneda)}</td>
@@ -889,12 +1077,16 @@ function SummaryStrip({
   data,
   loading,
   currency,
-  onCurrencyChange
+  onCurrencyChange,
+  openSelectId,
+  onOpenSelect
 }: {
   data: InvestmentResponse | null;
   loading: boolean;
   currency: InvestmentCurrency;
   onCurrencyChange: (currency: InvestmentCurrency) => void;
+  openSelectId: string | null;
+  onOpenSelect: (id: string | null) => void;
 }) {
   const summary = data?.summary;
   const currencyLines = data?.lines.filter((line) => line.moneda === currency) ?? [];
@@ -913,12 +1105,16 @@ function SummaryStrip({
         value={formatMoney(presupuesto, currency)}
         currency={currency}
         onCurrencyChange={onCurrencyChange}
+        openSelectId={openSelectId}
+        onOpenSelect={onOpenSelect}
       />
       <MetricWithCurrencyFilter
         label="$ Consumido"
         value={formatMoney(consumo, currency)}
         currency={currency}
         onCurrencyChange={onCurrencyChange}
+        openSelectId={openSelectId}
+        onOpenSelect={onOpenSelect}
       />
       <Metric label="Restante" value={formatMoney(restante, currency)} tone={restante < 0 ? 'bad' : 'good'} />
       <Metric label="% Completion" value={`${Math.round(completion * 100)}%`} tone={completion > 1 ? 'bad' : 'good'} />
@@ -939,25 +1135,31 @@ function MetricWithCurrencyFilter({
   label,
   value,
   currency,
-  onCurrencyChange
+  onCurrencyChange,
+  openSelectId,
+  onOpenSelect
 }: {
   label: string;
   value: string;
   currency: InvestmentCurrency;
   onCurrencyChange: (currency: InvestmentCurrency) => void;
+  openSelectId: string | null;
+  onOpenSelect: (id: string | null) => void;
 }) {
   return (
     <div className="metric">
       <div className="metric-heading">
         <span>{label}</span>
-        <select
+        <CustomSelect
+          id={`metric-${label}`}
           className="metric-filter"
           value={currency}
-          onChange={(event) => onCurrencyChange(event.target.value as InvestmentCurrency)}
-          aria-label={`Filtrar ${label} por moneda`}
-        >
-          {currencies.map((option) => <option key={option}>{option}</option>)}
-        </select>
+          options={[...currencies]}
+          openSelectId={openSelectId}
+          onOpenSelect={onOpenSelect}
+          onChange={(option) => onCurrencyChange(option as InvestmentCurrency)}
+          ariaLabel={`Filtrar ${label} por moneda`}
+        />
       </div>
       <strong>{value}</strong>
     </div>
@@ -969,6 +1171,8 @@ function DateRangeControl({
   range,
   customStartDate,
   customEndDate,
+  openSelectId,
+  onOpenSelect,
   onPresetChange,
   onCustomStartChange,
   onCustomEndChange
@@ -977,6 +1181,8 @@ function DateRangeControl({
   range: { startDate: string; endDate: string };
   customStartDate: string;
   customEndDate: string;
+  openSelectId: string | null;
+  onOpenSelect: (id: string | null) => void;
   onPresetChange: (preset: DatePreset) => void;
   onCustomStartChange: (date: string) => void;
   onCustomEndChange: (date: string) => void;
@@ -985,11 +1191,15 @@ function DateRangeControl({
     <div className="date-range-control">
       <label className="month-control">
         Rango
-        <select value={preset} onChange={(event) => onPresetChange(event.target.value as DatePreset)}>
-          {datePresetOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
+        <CustomSelect
+          id="date-preset"
+          className="date-preset-select"
+          value={preset}
+          options={datePresetOptions.map((option) => ({ label: option.label, value: option.value }))}
+          openSelectId={openSelectId}
+          onOpenSelect={onOpenSelect}
+          onChange={(option) => onPresetChange(option as DatePreset)}
+        />
       </label>
       {preset === 'custom' ? (
         <div className="custom-range">
@@ -1009,26 +1219,124 @@ function DateRangeControl({
   );
 }
 
+function FilterHeader({
+  filterKey,
+  label,
+  value,
+  options,
+  openFilter,
+  onToggle,
+  onChange
+}: {
+  filterKey: ControlFilterKey;
+  label: string;
+  value: string;
+  options: string[];
+  openFilter: ControlFilterKey | null;
+  onToggle: (filter: ControlFilterKey | null) => void;
+  onChange: (value: string) => void;
+}) {
+  const isOpen = openFilter === filterKey;
+  const allOptions = ['', ...options];
+
+  return (
+    <th>
+      <div className={`filter-header ${value ? 'active' : ''}`}>
+        <span>{label}</span>
+        <button
+          className="filter-trigger"
+          type="button"
+          onClick={() => onToggle(isOpen ? null : filterKey)}
+          aria-label={`Filtrar ${label}`}
+          aria-expanded={isOpen}
+        >
+          ▼
+        </button>
+        {isOpen ? (
+          <div className="filter-menu">
+            {allOptions.map((option) => (
+              <button
+                className={value === option ? 'selected' : ''}
+                key={option || 'all'}
+                type="button"
+                onClick={() => {
+                  onChange(option);
+                  onToggle(null);
+                }}
+              >
+                {option || 'Todos'}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </th>
+  );
+}
+
+function SortHeader({
+  label,
+  sortKey,
+  currentSort,
+  onChange
+}: {
+  label: string;
+  sortKey: SortKey;
+  currentSort: ControlSort;
+  onChange: (sort: ControlSort) => void;
+}) {
+  const isActive = currentSort?.key === sortKey;
+  const nextSort: ControlSort = !isActive
+    ? { key: sortKey, direction: 'desc' }
+    : currentSort.direction === 'desc'
+      ? { key: sortKey, direction: 'asc' }
+      : null;
+
+  return (
+    <th>
+      <button
+        className={`sort-header ${isActive ? 'active' : ''}`}
+        type="button"
+        onClick={() => onChange(nextSort)}
+        aria-label={`Ordenar ${label}`}
+      >
+        <span>{label}</span>
+        <span className="sort-icon">{isActive ? (currentSort.direction === 'desc' ? '↓' : '↑') : '↕'}</span>
+      </button>
+    </th>
+  );
+}
+
 function StatusToggle({
   value,
   compact = false,
+  id,
+  openSelectId,
+  onOpenSelect,
   onChange
 }: {
   value: InvestmentStatus;
   compact?: boolean;
+  id?: string;
+  openSelectId?: string | null;
+  onOpenSelect?: (id: string | null) => void;
   onChange: (status: InvestmentStatus) => void;
 }) {
   if (compact) {
     return (
-      <select
+      <CustomSelect
+        id={id || 'status'}
         className={`status-select ${value === 'PRESUPUESTO_OK' ? 'green' : 'yellow'}`}
         value={value}
-        onChange={(event) => onChange(event.target.value as InvestmentStatus)}
-        aria-label="Status"
-      >
-        <option value="EN_PROCESO">En proceso</option>
-        <option value="PRESUPUESTO_OK">Confirmado</option>
-      </select>
+        options={[
+          { label: 'En proceso', value: 'EN_PROCESO' },
+          { label: 'Confirmado', value: 'PRESUPUESTO_OK' }
+        ]}
+        openSelectId={openSelectId ?? null}
+        onOpenSelect={onOpenSelect ?? (() => undefined)}
+        onChange={(option) => onChange(option as InvestmentStatus)}
+        ariaLabel="Status"
+      />
     );
   }
 
@@ -1054,6 +1362,69 @@ function StatusToggle({
   );
 }
 
+function CustomSelect({
+  id,
+  value,
+  options,
+  className = '',
+  disabled = false,
+  openSelectId,
+  onOpenSelect,
+  onChange,
+  placeholder,
+  ariaLabel
+}: {
+  id: string;
+  value: string;
+  options: Array<string | SelectOption>;
+  className?: string;
+  disabled?: boolean;
+  openSelectId: string | null;
+  onOpenSelect: (id: string | null) => void;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  ariaLabel?: string;
+}) {
+  const normalizedOptions = options.map((option) => (
+    typeof option === 'string' ? { label: option, value: option } : option
+  ));
+  const selected = normalizedOptions.find((option) => option.value === value);
+  const isOpen = openSelectId === id;
+
+  return (
+    <div className={`custom-select ${className} ${isOpen ? 'open' : ''} ${disabled ? 'disabled' : ''}`}>
+      <button
+        className="custom-select-trigger"
+        type="button"
+        disabled={disabled}
+        onClick={() => onOpenSelect(isOpen ? null : id)}
+        aria-label={ariaLabel || placeholder || id}
+        aria-expanded={isOpen}
+      >
+        <span>{selected?.label || placeholder || 'Seleccionar'}</span>
+        <span className="custom-select-arrow">▼</span>
+      </button>
+      {isOpen ? (
+        <div className="custom-select-menu">
+          {normalizedOptions.map((option) => (
+            <button
+              className={option.value === value ? 'selected' : ''}
+              key={`${id}-${option.value || 'empty'}`}
+              type="button"
+              onClick={() => {
+                onChange(option.value);
+                onOpenSelect(null);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function Field({ label, value, type = 'text', onChange }: { label: string; value: string; type?: string; onChange: (value: string) => void }) {
   return (
     <label className="field">
@@ -1064,27 +1435,39 @@ function Field({ label, value, type = 'text', onChange }: { label: string; value
 }
 
 function SelectField({
+  id,
   label,
   value,
   options,
   placeholder,
   disabled = false,
+  openSelectId,
+  onOpenSelect,
   onChange
 }: {
+  id?: string;
   label: string;
   value: string;
   options: string[];
   placeholder?: string;
   disabled?: boolean;
+  openSelectId?: string | null;
+  onOpenSelect?: (id: string | null) => void;
   onChange: (value: string) => void;
 }) {
   return (
     <label className="field">
       {label ? <span>{label}</span> : null}
-      <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} required>
-        {placeholder ? <option value="">{placeholder}</option> : null}
-        {options.map((option) => <option key={option}>{option}</option>)}
-      </select>
+      <CustomSelect
+        id={id || label || 'select'}
+        value={value}
+        options={placeholder ? [{ label: placeholder, value: '' }, ...options] : options}
+        disabled={disabled}
+        openSelectId={openSelectId ?? null}
+        onOpenSelect={onOpenSelect ?? (() => undefined)}
+        onChange={onChange}
+        placeholder={placeholder}
+      />
     </label>
   );
 }
