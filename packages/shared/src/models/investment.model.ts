@@ -21,6 +21,9 @@ export interface ManualInvestmentLine {
   costoPorResultado: number;
   tktPromedio: number;
   mes: string;
+  createdAt?: string;
+  updatedAt?: string | null;
+  deletedAt?: string | null;
 }
 
 export interface InvestmentLine extends ManualInvestmentLine {

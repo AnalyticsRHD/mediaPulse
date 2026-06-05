@@ -29,13 +29,17 @@ export class ExternalApisService {
     scope: SupermetricsScope,
     date = this.today()
   ): Promise<DailyMetrics[]> {
+    if (this.shouldPreferAdsSheets(source)) {
+      return this.fetchAdsSheetsMetrics(source, scope, date);
+    }
+
     const apiKey = this.configService.supermetricsApiKey;
     const sourceConfig = this.getSupermetricsSourceConfig(source);
     const queryJson = sourceConfig.queryJson;
 
     if (!apiKey || !queryJson) {
       this.warnMissingConfig(`supermetrics-${source}`, `Supermetrics ${source} query not configured.`);
-      return [];
+      return this.fetchAdsSheetsMetrics(source, scope, date);
     }
 
     let query: any;
@@ -62,7 +66,9 @@ export class ExternalApisService {
     } catch (error) {
       if (axios.isAxiosError(error)) {
         const detail = this.axiosDetail(error);
-        this.logger.error(`Supermetrics ${source} ${scope} sync failed: ${detail}`);
+        this.logExternalSyncFailure(`Supermetrics ${source} ${scope}`, detail);
+        const sheetsMetrics = await this.fetchAdsSheetsMetrics(source, scope, date);
+        if (sheetsMetrics.length > 0 || this.configService.adsSheetsSourceSpreadsheetId) return sheetsMetrics;
         throw new BadGatewayException(`Supermetrics ${source} sync failed (${detail})`);
       }
 
@@ -361,6 +367,150 @@ export class ExternalApisService {
     return metrics;
   }
 
+  private async fetchAdsSheetsMetrics(
+    source: SupermetricsSource,
+    scope: SupermetricsScope,
+    date = this.today()
+  ): Promise<DailyMetrics[]> {
+    const spreadsheetId = this.configService.adsSheetsSourceSpreadsheetId;
+
+    if (!spreadsheetId) {
+      this.warnMissingConfig('ads-sheets', 'Google/Meta source spreadsheet not configured.');
+      return [];
+    }
+
+    if (source === 'linkedin') {
+      this.warnMissingConfig('linkedin-sheets', 'LinkedIn Sheets sync is not configured yet.');
+      return [];
+    }
+
+    const range = this.getAdsSheetsRange(source, scope);
+    if (!range) return [];
+
+    try {
+      const rows = await this.fetchGoogleSheetRows(
+        spreadsheetId,
+        range.sheetName,
+        range.rangeA1,
+        this.configService.adsSheetsGoogleSheetsApiKey,
+        this.configService.adsSheetsSyncTimeoutSeconds
+      );
+
+      return this.parseAdsSheetRows(rows, source, scope, date, range);
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        this.logger.error(`${source} Sheets ${scope} sync failed: ${this.axiosDetail(error)}`);
+        return [];
+      }
+
+      this.logger.error(`${source} Sheets ${scope} sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  }
+
+  private shouldPreferAdsSheets(source: SupermetricsSource): boolean {
+    return Boolean(this.configService.adsSheetsSourceSpreadsheetId) && ['google', 'meta'].includes(source);
+  }
+
+  private getAdsSheetsRange(
+    source: SupermetricsSource,
+    scope: SupermetricsScope
+  ): { sheetName: string; rangeA1: string; platform: string; startAtDataRow: boolean } | null {
+    if (source === 'google') {
+      return this.parseSheetRange(
+        scope === 'monthly' ? this.configService.googleAdsMonthlyRange : this.configService.googleAdsDailyRange,
+        'Google',
+        scope === 'monthly' ? 'A:F' : 'M:P'
+      );
+    }
+
+    if (source === 'meta') {
+      return {
+        ...this.parseSheetRange(
+          scope === 'monthly' ? this.configService.metaAdsMonthlyRange : this.configService.metaAdsDailyRange,
+          'Meta',
+          scope === 'monthly' ? 'A:C' : 'L:N'
+        ),
+        platform: 'META',
+        startAtDataRow: true
+      };
+    }
+
+    return null;
+  }
+
+  private parseSheetRange(
+    value: string,
+    fallbackSheetName: string,
+    fallbackRangeA1: string
+  ): { sheetName: string; rangeA1: string; platform: string; startAtDataRow: boolean } {
+    const [sheetName, rangeA1] = value.includes('!')
+      ? value.split('!', 2)
+      : [fallbackSheetName, value || fallbackRangeA1];
+
+    return {
+      sheetName: sheetName.replace(/^'|'$/g, ''),
+      rangeA1: rangeA1 || fallbackRangeA1,
+      platform: fallbackSheetName === 'Google' ? 'Google' : fallbackSheetName,
+      startAtDataRow: true
+    };
+  }
+
+  private async parseAdsSheetRows(
+    rows: any[][],
+    source: SupermetricsSource,
+    scope: SupermetricsScope,
+    date: string,
+    range: { platform: string }
+  ): Promise<DailyMetrics[]> {
+    const metrics: DailyMetrics[] = [];
+    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const endDate = date;
+    const currentMonth = Number(date.slice(5, 7));
+    const rowsWithoutHeaders = rows.filter((row) => row.some((value) => String(value || '').trim() !== ''));
+    const normalizedRows = rowsWithoutHeaders.filter((row) => {
+      const first = this.normalizeHeader(String(row[0] || ''));
+      return first !== 'month' && first !== 'mes' && first !== 'bajadagoogleads' && first !== 'consumodeayer';
+    });
+
+    for (const [index, row] of normalizedRows.entries()) {
+      const month = this.numberValue(row[0]);
+      const accountName = String(row[1] || '').trim();
+      const spend = this.numberValue(row[2]);
+      const referencia = String(row[5] || '').trim() || String(row[3] || '').trim() || this.inferReference(accountName) || accountName;
+
+      if (!accountName || spend === 0) continue;
+      if (scope === 'monthly' && month && month !== currentMonth) continue;
+
+      const metricDate = scope === 'monthly'
+        ? `${date.slice(0, 4)}-${String(month || currentMonth).padStart(2, '0')}-01`
+        : date;
+
+      if (metricDate < startDate || metricDate > endDate) continue;
+
+      const mapping = await this.brandMappingService.resolve(referencia);
+
+      metrics.push({
+        date: metricDate,
+        cliente: mapping.cliente,
+        marca: mapping.marca,
+        referencia,
+        accountName,
+        plataforma: range.platform,
+        campaignId: `${range.platform}-${this.normalizeHeader(accountName)}-${scope}-${metricDate}-${index}`,
+        campaignName: accountName,
+        granularity: scope,
+        spend: this.round2(spend),
+        impressions: 0,
+        clicks: 0,
+        conversions: this.numberValue(row[3]),
+        revenue: this.numberValue(row[4])
+      });
+    }
+
+    return metrics;
+  }
+
   private extractSupermetricsTable(data: any): any[][] {
     if (Array.isArray(data?.data?.rows) && Array.isArray(data?.data?.headers)) {
       return [data.data.headers, ...data.data.rows];
@@ -529,6 +679,15 @@ export class ExternalApisService {
     this.logger.warn(message);
   }
 
+  private logExternalSyncFailure(label: string, detail: string): void {
+    if (/TRIAL_EXPIRED/i.test(detail)) {
+      this.logger.warn(`${label} sync skipped: ${detail}`);
+      return;
+    }
+
+    this.logger.error(`${label} sync failed: ${detail}`);
+  }
+
   private axiosDetail(error: any): string {
     if (!axios.isAxiosError(error)) return error instanceof Error ? error.message : String(error);
 
@@ -556,12 +715,17 @@ export class ExternalApisService {
     }
   }
 
-  private async fetchGoogleSheetRows(spreadsheetId: string, sheetName: string): Promise<any[][]> {
-    const apiKey = this.configService.mercadoLibreGoogleSheetsApiKey;
-    const timeout = this.configService.mercadoLibreSyncTimeoutSeconds * 1000;
+  private async fetchGoogleSheetRows(
+    spreadsheetId: string,
+    sheetName: string,
+    rangeA1 = 'A:L',
+    apiKey = this.configService.mercadoLibreGoogleSheetsApiKey,
+    timeoutSeconds = this.configService.mercadoLibreSyncTimeoutSeconds
+  ): Promise<any[][]> {
+    const timeout = timeoutSeconds * 1000;
 
     if (apiKey) {
-      const range = `'${sheetName.replace(/'/g, "''")}'!A:L`;
+      const range = `'${sheetName.replace(/'/g, "''")}'!${rangeA1}`;
       const response = await axios.get(
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`,
         {
@@ -578,7 +742,8 @@ export class ExternalApisService {
       {
         params: {
           tqx: 'out:csv',
-          sheet: sheetName
+          sheet: sheetName,
+          range: rangeA1
         },
         responseType: 'text',
         timeout

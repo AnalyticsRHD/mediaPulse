@@ -1,10 +1,14 @@
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Headers, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { InvestmentsService } from './investments.service';
 import { ManualInvestmentDto } from './dto/manual-investment.dto';
+import { AuthService } from '../auth/auth.service';
 
 @Controller('investments')
 export class InvestmentsController {
-  constructor(private readonly investmentsService: InvestmentsService) {}
+  constructor(
+    private readonly investmentsService: InvestmentsService,
+    private readonly authService: AuthService
+  ) {}
 
   @Get()
   getInvestments(
@@ -23,30 +27,34 @@ export class InvestmentsController {
   }
 
   @Post('manual')
-  createManualLine(@Body() dto: ManualInvestmentDto) {
-    return this.investmentsService.createManualLine(dto);
+  async createManualLine(@Body() dto: ManualInvestmentDto, @Headers('authorization') authorization?: string) {
+    const user = await this.authService.requireManualEditor(authorization);
+    return this.investmentsService.createManualLine(dto, user);
   }
 
   @Patch('manual/:id/presupuesto')
-  async updateManualBudget(@Param('id') id: string, @Body('presupuesto') presupuesto: number) {
-    const updated = await this.investmentsService.updateManualBudget(id, presupuesto);
+  async updateManualBudget(@Param('id') id: string, @Body('presupuesto') presupuesto: number, @Headers('authorization') authorization?: string) {
+    const user = await this.authService.requireManualEditor(authorization);
+    const updated = await this.investmentsService.updateManualBudget(id, presupuesto, user);
     if (!updated) throw new NotFoundException('Manual investment line not found');
     return updated;
   }
 
   @Patch('manual/:id')
-  async updateManualLine(@Param('id') id: string, @Body() dto: Partial<ManualInvestmentDto>) {
-    const updated = await this.investmentsService.updateManualLine(id, dto);
+  async updateManualLine(@Param('id') id: string, @Body() dto: Partial<ManualInvestmentDto>, @Headers('authorization') authorization?: string) {
+    const user = await this.authService.requireManualEditor(authorization);
+    const updated = await this.investmentsService.updateManualLine(id, dto, user);
     if (!updated) throw new NotFoundException('Manual investment line not found');
     return updated;
   }
 
   @Delete('manual')
-  deleteManualLines(@Body('ids') ids: string[]) {
+  async deleteManualLines(@Body('ids') ids: string[], @Headers('authorization') authorization?: string) {
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new BadRequestException('ids must be a non-empty array');
     }
 
-    return this.investmentsService.deleteManualLines(ids);
+    const user = await this.authService.requireManualEditor(authorization);
+    return this.investmentsService.deleteManualLines(ids, user);
   }
 }

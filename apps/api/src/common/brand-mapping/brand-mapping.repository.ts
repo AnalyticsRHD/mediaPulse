@@ -20,12 +20,14 @@ export class BrandMappingRepository implements OnApplicationShutdown {
 
     if (!this.configService.databaseUrl) return false;
 
+    const dbConfig = this.configService.database;
     this.pool = new Pool({
-      connectionString: this.configService.databaseUrl,
-      ssl: { rejectUnauthorized: false }
+      connectionString: dbConfig.url,
+      ssl: dbConfig.ssl
     });
 
-    await this.pool.query(`
+    if (dbConfig.synchronize) {
+      await this.pool.query(`
       CREATE TABLE IF NOT EXISTS brand_mappings (
         id bigserial PRIMARY KEY,
         cliente text NOT NULL,
@@ -35,6 +37,7 @@ export class BrandMappingRepository implements OnApplicationShutdown {
         UNIQUE (cliente, marca)
       );
     `);
+    }
 
     return true;
   }

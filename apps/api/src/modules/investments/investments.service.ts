@@ -1,27 +1,22 @@
 import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { InvestmentCurrency, InvestmentLine, InvestmentStatus, InvestmentsResponse, ManualInvestmentLine } from '@mediapulse/shared';
 import { v4 as uuidv4 } from 'uuid';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
 import { MetricsService } from '../metrics/metrics.service';
 import { ManualInvestmentDto } from './dto/manual-investment.dto';
 import { BrandMappingService } from '../../common/brand-mapping/brand-mapping.service';
 import { ManualInvestmentsRepository } from './manual-investments.repository';
+import { AuthUser } from '../auth/auth.types';
 
 @Injectable()
 export class InvestmentsService {
   private manualLines = new Map<string, ManualInvestmentLine>();
-  private readonly manualLinesDir = join(__dirname, '../../../data');
-  private readonly manualLinesPath = join(this.manualLinesDir, 'manual-investments.json');
   private manualLinesHydrated = false;
 
   constructor(
     private readonly metricsService: MetricsService,
     private readonly brandMappingService: BrandMappingService,
     private readonly manualInvestmentsRepository: ManualInvestmentsRepository
-  ) {
-    this.loadManualLines();
-  }
+  ) {}
 
   async findAll(
     mes = this.currentMonth(),
@@ -68,7 +63,7 @@ export class InvestmentsService {
     };
   }
 
-  async createManualLine(dto: ManualInvestmentDto): Promise<ManualInvestmentLine> {
+  async createManualLine(dto: ManualInvestmentDto, user?: AuthUser): Promise<ManualInvestmentLine> {
     await this.hydrateManualLines();
     this.ensureManualLine(dto);
     const mapping = await this.brandMappingService.resolveClientBrand(
@@ -88,33 +83,32 @@ export class InvestmentsService {
 
     this.manualLines.set(line.id, line);
     await this.persistManualLine(line);
+    await this.persistManualLog('CREATED', line, user);
     return line;
   }
 
-  async updateManualBudget(id: string, presupuesto: number): Promise<ManualInvestmentLine | null> {
-    return this.updateManualLine(id, { presupuesto });
+  async updateManualBudget(id: string, presupuesto: number, user?: AuthUser): Promise<ManualInvestmentLine | null> {
+    return this.updateManualLine(id, { presupuesto }, user);
   }
 
-  async deleteManualLines(ids: string[]): Promise<{ deletedCount: number; deletedIds: string[] }> {
+  async deleteManualLines(ids: string[], user?: AuthUser): Promise<{ deletedCount: number; deletedIds: string[] }> {
     await this.hydrateManualLines();
+    const existingLines = ids
+      .map((id) => this.manualLines.get(id))
+      .filter((line): line is ManualInvestmentLine => Boolean(line));
     const databaseResult = await this.deleteManualLinesFromDatabase(ids);
     if (databaseResult) {
       databaseResult.deletedIds.forEach((id) => this.manualLines.delete(id));
+      await Promise.all(existingLines
+        .filter((line) => databaseResult.deletedIds.includes(line.id))
+        .map((line) => this.persistManualLog('DELETED', line, user)));
       return databaseResult;
     }
 
-    const deletedIds = ids.filter((id) => this.manualLines.delete(id));
-    if (deletedIds.length > 0) {
-      this.persistManualLines();
-    }
-
-    return {
-      deletedCount: deletedIds.length,
-      deletedIds
-    };
+    throw new ServiceUnavailableException('Database is required for manual investments');
   }
 
-  async updateManualLine(id: string, dto: Partial<ManualInvestmentDto>): Promise<ManualInvestmentLine | null> {
+  async updateManualLine(id: string, dto: Partial<ManualInvestmentDto>, user?: AuthUser): Promise<ManualInvestmentLine | null> {
     await this.hydrateManualLines();
     const existing = this.manualLines.get(id);
     if (!existing) return null;
@@ -140,6 +134,7 @@ export class InvestmentsService {
 
     this.manualLines.set(id, updated);
     await this.persistManualLine(updated);
+    await this.persistManualLog('UPDATED', updated, user);
     return updated;
   }
 
@@ -308,52 +303,30 @@ export class InvestmentsService {
   }
 
   private async hydrateManualLines(): Promise<void> {
-    if (this.manualLinesHydrated) return;
-    this.manualLinesHydrated = true;
-
     try {
-      const fileLines = Array.from(this.manualLines.values());
-      if (fileLines.length > 0) {
-        await this.manualInvestmentsRepository.syncFromFile(fileLines);
-      }
-
       const databaseLines = await this.manualInvestmentsRepository.findAll();
-      if (databaseLines.length > 0 || this.manualInvestmentsRepository.enabled) {
-        this.manualLines = new Map(databaseLines.map((line) => [line.id, line]));
-      }
+      this.manualLines = new Map(databaseLines.map((line) => [line.id, line]));
+      this.manualLinesHydrated = true;
     } catch {
       this.manualLinesHydrated = false;
       throw new ServiceUnavailableException('Could not load manual investments');
     }
   }
 
-  private loadManualLines(): void {
-    try {
-      if (!existsSync(this.manualLinesPath)) return;
-      const parsed = JSON.parse(readFileSync(this.manualLinesPath, 'utf8')) as ManualInvestmentLine[];
-      parsed.forEach((line) => {
-        if (line.id) this.manualLines.set(line.id, line);
-      });
-    } catch {
-      this.manualLines.clear();
-    }
-  }
-
-  private persistManualLines(): void {
-    try {
-      mkdirSync(this.manualLinesDir, { recursive: true });
-      writeFileSync(this.manualLinesPath, JSON.stringify(Array.from(this.manualLines.values()), null, 2));
-    } catch {
-      throw new ServiceUnavailableException('Could not persist manual investments');
-    }
-  }
-
   private async persistManualLine(line: ManualInvestmentLine): Promise<void> {
     try {
       const persisted = await this.manualInvestmentsRepository.upsert(line);
-      if (!persisted) this.persistManualLines();
+      if (!persisted) throw new Error('Database is not configured');
     } catch {
       throw new ServiceUnavailableException('Could not persist manual investment');
+    }
+  }
+
+  private async persistManualLog(action: 'CREATED' | 'UPDATED' | 'DELETED', line: ManualInvestmentLine, user?: AuthUser): Promise<void> {
+    try {
+      await this.manualInvestmentsRepository.insertLog(action, line, user);
+    } catch {
+      throw new ServiceUnavailableException('Could not persist manual investment log');
     }
   }
 

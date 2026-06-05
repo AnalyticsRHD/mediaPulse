@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createDbConfig, DbConfig } from './db.config';
 
 dotenv.config();
 const workspaceEnvPath = path.resolve(process.cwd(), '..', '..', '.env');
@@ -49,6 +50,34 @@ export class ConfigService {
 
   get supermetricsSyncTimeoutSeconds(): number {
     return parseInt(process.env.SUPERMETRICS_SYNC_TIMEOUT_SECONDS || '300', 10);
+  }
+
+  get adsSheetsSourceSpreadsheetId(): string {
+    return this.cleanPlaceholder(process.env.ADS_SHEETS_SOURCE_SPREADSHEET_ID || process.env.GOOGLE_META_SOURCE_SPREADSHEET_ID || '');
+  }
+
+  get adsSheetsGoogleSheetsApiKey(): string {
+    return this.cleanPlaceholder(process.env.ADS_SHEETS_GOOGLE_SHEETS_API_KEY || process.env.GOOGLE_SHEETS_API_KEY || '');
+  }
+
+  get adsSheetsSyncTimeoutSeconds(): number {
+    return parseInt(process.env.ADS_SHEETS_SYNC_TIMEOUT_SECONDS || '60', 10);
+  }
+
+  get googleAdsMonthlyRange(): string {
+    return process.env.GOOGLE_ADS_SHEETS_MONTHLY_RANGE || 'Google!A:F';
+  }
+
+  get googleAdsDailyRange(): string {
+    return process.env.GOOGLE_ADS_SHEETS_DAILY_RANGE || 'Google!M:P';
+  }
+
+  get metaAdsMonthlyRange(): string {
+    return process.env.META_ADS_SHEETS_MONTHLY_RANGE || 'Meta!A:C';
+  }
+
+  get metaAdsDailyRange(): string {
+    return process.env.META_ADS_SHEETS_DAILY_RANGE || 'Meta!L:N';
   }
 
   get tiktokApiBaseUrl(): string {
@@ -118,7 +147,23 @@ export class ConfigService {
   }
 
   get databaseUrl(): string {
-    return process.env.DATABASE_URL || '';
+    return this.database.url;
+  }
+
+  get database(): DbConfig {
+    return createDbConfig();
+  }
+
+  get databaseSynchronize(): boolean {
+    return this.database.synchronize;
+  }
+
+  get jwtSecret(): string {
+    return this.cleanPlaceholder(process.env.JWT_SECRET || '') || 'mediapulse-local-dev-secret';
+  }
+
+  get jwtExpiresIn(): string {
+    return process.env.JWT_EXPIRES_IN || '8h';
   }
 
   get apiPort(): number {

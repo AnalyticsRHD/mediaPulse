@@ -10,10 +10,12 @@ import { ExternalApisModule } from './common/external-apis/external-apis.module'
 import { IngestionsSchedulerModule } from './common/ingestionsScheduler/ingestionsScheduler.module';
 import { InvestmentsModule } from './modules/investments/investments.module';
 import { BrandMappingModule } from './common/brand-mapping/brand-mapping.module';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
   imports: [
     ConfigModule,
+    AuthModule,
     BrandMappingModule,
     AirtableModule,
     ExternalApisModule,

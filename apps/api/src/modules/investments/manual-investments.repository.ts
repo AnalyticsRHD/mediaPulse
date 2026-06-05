@@ -2,6 +2,9 @@ import { Injectable, OnApplicationShutdown } from '@nestjs/common';
 import { InvestmentCurrency, InvestmentStatus, ManualInvestmentLine } from '@mediapulse/shared';
 import { Pool } from 'pg';
 import { ConfigService } from '../../config/config.service';
+import { AuthUser } from '../auth/auth.types';
+
+export type ManualInvestmentLogAction = 'CREATED' | 'UPDATED' | 'DELETED';
 
 @Injectable()
 export class ManualInvestmentsRepository implements OnApplicationShutdown {
@@ -20,12 +23,16 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
 
     if (!this.configService.databaseUrl) return false;
 
+    const dbConfig = this.configService.database;
     this.pool = new Pool({
-      connectionString: this.configService.databaseUrl,
-      ssl: { rejectUnauthorized: false }
+      connectionString: dbConfig.url,
+      ssl: dbConfig.ssl
     });
 
-    await this.pool.query(`
+    if (dbConfig.synchronize) {
+      await this.pool.query(`
+      CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
       CREATE TABLE IF NOT EXISTS manual_investment_lines (
         id uuid PRIMARY KEY,
         anunciante text NOT NULL,
@@ -39,9 +46,29 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         tkt_promedio numeric NOT NULL,
         mes char(7) NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        deleted_at timestamptz NULL
+      );
+
+      ALTER TABLE manual_investment_lines
+        ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
+        ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now(),
+        ADD COLUMN IF NOT EXISTS deleted_at timestamptz NULL;
+
+      CREATE TABLE IF NOT EXISTS manual_investment_logs (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        action text NOT NULL CHECK (action IN ('CREATED', 'UPDATED', 'DELETED')),
+        user_id uuid NULL,
+        user_name text NOT NULL,
+        manual_investment_line_id uuid NOT NULL,
+        manual_investment_line_anunciante text NOT NULL,
+        manual_investment_line_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NULL,
+        deleted_at timestamptz NULL
       );
     `);
+    }
 
     return true;
   }
@@ -61,8 +88,12 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         presupuesto,
         costo_por_resultado,
         tkt_promedio,
-        mes
+        mes,
+        created_at,
+        updated_at,
+        deleted_at
       FROM manual_investment_lines
+      WHERE deleted_at IS NULL
       ORDER BY anunciante, marca, moneda, plataforma, objetivo;
     `);
 
@@ -123,7 +154,13 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
     if (!(await this.init()) || !this.pool) return null;
 
     const result = await this.pool.query<{ id: string }>(
-      'DELETE FROM manual_investment_lines WHERE id = ANY($1::uuid[]) RETURNING id;',
+      `
+        UPDATE manual_investment_lines
+        SET deleted_at = now(), updated_at = now()
+        WHERE id = ANY($1::uuid[])
+          AND deleted_at IS NULL
+        RETURNING id;
+      `,
       [ids]
     );
 
@@ -133,12 +170,34 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
     };
   }
 
-  async syncFromFile(lines: ManualInvestmentLine[]): Promise<boolean> {
+  async insertLog(action: ManualInvestmentLogAction, line: ManualInvestmentLine, user?: AuthUser | null): Promise<boolean> {
     if (!(await this.init()) || !this.pool) return false;
 
-    for (const line of lines) {
-      await this.upsert(line);
-    }
+    await this.pool.query(
+      `
+        INSERT INTO manual_investment_logs (
+          action,
+          user_id,
+          user_name,
+          manual_investment_line_id,
+          manual_investment_line_anunciante,
+          manual_investment_line_snapshot,
+          updated_at,
+          deleted_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8);
+      `,
+      [
+        action,
+        user?.id || null,
+        user?.name || 'Sistema',
+        line.id,
+        line.anunciante,
+        JSON.stringify(line),
+        action === 'UPDATED' ? new Date().toISOString() : null,
+        action === 'DELETED' ? new Date().toISOString() : null
+      ]
+    );
 
     return true;
   }
@@ -159,7 +218,10 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       presupuesto: Number(row.presupuesto),
       costoPorResultado: Number(row.costo_por_resultado),
       tktPromedio: Number(row.tkt_promedio),
-      mes: String(row.mes)
+      mes: String(row.mes),
+      createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : undefined,
+      updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null,
+      deletedAt: row.deleted_at ? new Date(String(row.deleted_at)).toISOString() : null
     };
   }
 }
