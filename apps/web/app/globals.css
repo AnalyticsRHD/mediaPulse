@@ -195,6 +195,20 @@ select {
   gap: 18px;
 }
 
+.login-heading {
+  display: grid;
+  gap: 18px;
+}
+
+.login-logo {
+  position:absolute;
+  top:20px;
+  width: 250px;
+  height: 250px;
+  justify-self: center;
+  object-fit: contain;
+}
+
 .login-page-form h1 {
   font-size: 38px;
 }
@@ -788,6 +802,16 @@ tbody tr:nth-child(even) {
   color: var(--accent);
 }
 
+.custom-select-empty {
+  min-height: 34px;
+  display: grid;
+  place-items: center start;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
 .date-preset-select .custom-select-menu {
   max-height: 360px;
 }
@@ -990,9 +1014,8 @@ tbody tr:nth-child(even) {
 
 .preview-block th:nth-child(4),
 .preview-block td:nth-child(4) {
-  padding-left: 3px;
-  padding-right: 3px;
-  width: 112px;
+  width: 80px;
+  text-align: center;
 }
 
 .preview-block th:nth-child(5),
@@ -1006,25 +1029,30 @@ tbody tr:nth-child(even) {
 
 .preview-block th:nth-child(7),
 .preview-block td:nth-child(7) {
-  width: 48px;
-  text-align: center;
+  width: 88px;
 }
 
 .preview-block th:nth-child(8),
 .preview-block td:nth-child(8) {
-  width: 124px;
+  width: 48px;
   text-align: center;
 }
 
 .preview-block th:nth-child(9),
 .preview-block td:nth-child(9) {
+  width: 124px;
+  text-align: center;
+}
+
+.preview-block th:nth-child(10),
+.preview-block td:nth-child(10) {
   width: 132px;
   padding-left: 4px;
   padding-right: 4px;
 }
 
-.preview-block th:nth-child(10),
-.preview-block td:nth-child(10) {
+.preview-block th:nth-child(11),
+.preview-block td:nth-child(11) {
   width: 68px;
 }
 
@@ -1110,6 +1138,40 @@ tbody tr:nth-child(even) {
   margin: 0;
 }
 
+.bulk-delete-bar,
+.select-all-brand {
+  display: flex;
+  align-items: center;
+}
+
+.bulk-delete-bar {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 8px;
+  padding: 6px 0 2px 5px;
+  background: transparent;
+}
+
+.select-all-brand {
+  min-height: 24px;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 6px;
+  color: #000;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.select-all-brand input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
 .preview-title .currency-badge {
   border-radius: 999px;
   background: var(--soft);
@@ -1123,6 +1185,57 @@ tfoot td {
   background: var(--accent);
   color: #fff;
   font-weight: 800;
+}
+
+.preview-block tfoot td:nth-child(1) {
+  width: 120px;
+  text-align: left;
+}
+
+.preview-block tfoot td:nth-child(2) {
+  width: 82px;
+  text-align: left;
+}
+
+.preview-block tfoot td:nth-child(3) {
+  width: 104px;
+  text-align: left;
+}
+
+.preview-block tfoot td:nth-child(4) {
+  width: 80px;
+  text-align: center;
+}
+
+.preview-block tfoot td:nth-child(5),
+.preview-block tfoot td:nth-child(6) {
+  width: 112px;
+  text-align: right;
+}
+
+.preview-block tfoot td:nth-child(7) {
+  width: 88px;
+  text-align: right;
+}
+
+.preview-block tfoot td:nth-child(8) {
+  width: 48px;
+  text-align: center;
+}
+
+.preview-block tfoot td:nth-child(9) {
+  width: 124px;
+  text-align: center;
+}
+
+.preview-block tfoot td:nth-child(10) {
+  width: 132px;
+  text-align: right;
+}
+
+.preview-block tfoot td:nth-child(11) {
+  width: 68px;
+  text-align: right;
 }
 
 .error-banner {

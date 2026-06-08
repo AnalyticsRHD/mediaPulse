@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createDbConfig, DbConfig } from './db.config';
+import { createDbConfig } from './db.config';
+import type { DbConfig } from './db.config';
 
 dotenv.config();
 const workspaceEnvPath = path.resolve(process.cwd(), '..', '..', '.env');
@@ -12,6 +13,8 @@ if (fs.existsSync(workspaceEnvPath)) {
 
 @Injectable()
 export class ConfigService {
+  private readonly dbConfig = createDbConfig();
+
   get airtableApiKey(): string {
     return process.env.AIRTABLE_API_KEY || '';
   }
@@ -147,15 +150,15 @@ export class ConfigService {
   }
 
   get databaseUrl(): string {
-    return this.database.url;
+    return this.dbConfig.url;
   }
 
   get database(): DbConfig {
-    return createDbConfig();
+    return this.dbConfig;
   }
 
   get databaseSynchronize(): boolean {
-    return this.database.synchronize;
+    return this.dbConfig.synchronize;
   }
 
   get jwtSecret(): string {

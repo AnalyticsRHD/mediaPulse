@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
@@ -217,6 +217,10 @@ function getQueryMonth(preset: DatePreset, range: DateRange) {
 const integer = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 });
 
 function formatMoney(value: number, moneda: InvestmentCurrency = 'CHL') {
+  if (moneda === 'CHL') {
+    return `CHL ${integer.format(value)}`;
+  }
+
   const currencyByMoneda: Record<InvestmentCurrency, string> = {
     ARS: 'ARS',
     CHL: 'CLP',
@@ -264,35 +268,59 @@ function platformClassName(platform: string) {
   return `platform-${normalized}`;
 }
 
+type CurrencyTotal = {
+  moneda: InvestmentCurrency;
+  presupuesto: number;
+  fcProyectada: number;
+};
+
+function sortCurrencyTotals(totals: CurrencyTotal[]) {
+  return totals.sort((a, b) => a.moneda.localeCompare(b.moneda));
+}
+
+function formatCurrencyTotals(totals: CurrencyTotal[], field: 'presupuesto' | 'fcProyectada') {
+  return sortCurrencyTotals([...totals])
+    .map((total) => formatMoney(total[field], total.moneda))
+    .join(' | ');
+}
+
 function getBrandTotals(lines: InvestmentLine[]) {
-  const totals = new Map<string, { marca: string; presupuesto: number; fcProyectada: number }>();
+  const totals = new Map<string, { marca: string; currencies: Map<InvestmentCurrency, CurrencyTotal> }>();
 
   lines.forEach((line) => {
     const marca = line.marca ?? 'Sin marca';
-    const existing = totals.get(marca) ?? { marca, presupuesto: 0, fcProyectada: 0 };
-    totals.set(marca, {
-      marca,
-      presupuesto: existing.presupuesto + line.presupuesto,
-      fcProyectada: existing.fcProyectada + line.fcProyectada
+    const existing = totals.get(marca) ?? { marca, currencies: new Map<InvestmentCurrency, CurrencyTotal>() };
+    const currencyTotal = existing.currencies.get(line.moneda) ?? { moneda: line.moneda, presupuesto: 0, fcProyectada: 0 };
+    existing.currencies.set(line.moneda, {
+      moneda: line.moneda,
+      presupuesto: currencyTotal.presupuesto + line.presupuesto,
+      fcProyectada: currencyTotal.fcProyectada + line.fcProyectada
     });
+    totals.set(marca, existing);
   });
 
-  return Array.from(totals.values()).sort((a, b) => a.marca.localeCompare(b.marca));
+  return Array.from(totals.values())
+    .map((item) => ({ marca: item.marca, totals: sortCurrencyTotals(Array.from(item.currencies.values())) }))
+    .sort((a, b) => a.marca.localeCompare(b.marca));
 }
 
 function getClientTotals(lines: InvestmentLine[]) {
-  const totals = new Map<string, { cliente: string; presupuesto: number; fcProyectada: number }>();
+  const totals = new Map<string, { cliente: string; currencies: Map<InvestmentCurrency, CurrencyTotal> }>();
 
   lines.forEach((line) => {
-    const existing = totals.get(line.anunciante) ?? { cliente: line.anunciante, presupuesto: 0, fcProyectada: 0 };
-    totals.set(line.anunciante, {
-      cliente: line.anunciante,
-      presupuesto: existing.presupuesto + line.presupuesto,
-      fcProyectada: existing.fcProyectada + line.fcProyectada
+    const existing = totals.get(line.anunciante) ?? { cliente: line.anunciante, currencies: new Map<InvestmentCurrency, CurrencyTotal>() };
+    const currencyTotal = existing.currencies.get(line.moneda) ?? { moneda: line.moneda, presupuesto: 0, fcProyectada: 0 };
+    existing.currencies.set(line.moneda, {
+      moneda: line.moneda,
+      presupuesto: currencyTotal.presupuesto + line.presupuesto,
+      fcProyectada: currencyTotal.fcProyectada + line.fcProyectada
     });
+    totals.set(line.anunciante, existing);
   });
 
-  return Array.from(totals.values()).sort((a, b) => a.cliente.localeCompare(b.cliente));
+  return Array.from(totals.values())
+    .map((item) => ({ cliente: item.cliente, totals: sortCurrencyTotals(Array.from(item.currencies.values())) }))
+    .sort((a, b) => a.cliente.localeCompare(b.cliente));
 }
 
 function getControlFilterOptions(lines: InvestmentLine[]): Record<ControlFilterKey, string[]> {
@@ -389,7 +417,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       .filter((line) => !previewClientFilter || line.anunciante === previewClientFilter)
       .filter((line) => !previewBrandFilter || line.marca === previewBrandFilter)
       .forEach((line) => {
-      const key = `${line.anunciante}-${line.moneda}`;
+      const key = `${line.anunciante}-${line.marca ?? 'Sin marca'}`;
       groups.set(key, [...(groups.get(key) ?? []), line]);
     });
     return Array.from(groups.entries()).map(([key, lines]) => ({ key, lines }));
@@ -535,7 +563,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       setOpenControlFilter(null);
     }
 
-    function closeOnEscape(event: KeyboardEvent) {
+    function closeOnEscape(event: globalThis.KeyboardEvent) {
       if (event.key !== 'Escape') return;
       setOpenSelectId(null);
       setOpenControlFilter(null);
@@ -719,6 +747,26 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
         ? current.filter((item) => item !== id)
         : [...current, id]
     ));
+  }
+
+  function toggleDeleteBrandSelection(lines: InvestmentLine[], marca: string) {
+    if (!canManageManualLines) return;
+    const brandIds = lines
+      .filter((line) => (line.marca ?? line.anunciante) === marca)
+      .map((line) => line.id);
+
+    setSelectedDeleteIds((current) => {
+      const selected = new Set(current);
+      const allSelected = brandIds.length > 0 && brandIds.every((id) => selected.has(id));
+
+      if (allSelected) {
+        brandIds.forEach((id) => selected.delete(id));
+      } else {
+        brandIds.forEach((id) => selected.add(id));
+      }
+
+      return Array.from(selected);
+    });
   }
 
   async function confirmDeleteLines() {
@@ -996,12 +1044,15 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
               const groupStatus = group.lines.every((line) => line.status === 'PRESUPUESTO_OK')
                 ? 'PRESUPUESTO_OK'
                 : 'EN_PROCESO';
+              const groupCurrencies = uniqueValues(group.lines.map((line) => line.moneda));
               return (
                 <section className="preview-block" key={group.key}>
                   <div className="preview-title">
                     <div className="preview-title-main">
                       <strong>{group.lines[0].anunciante}</strong>
-                      <span className="currency-badge">{group.lines[0].moneda}</span>
+                      {groupCurrencies.map((currency) => (
+                        <span className="currency-badge" key={currency}>{currency}</span>
+                      ))}
                       {canManageManualLines ? (
                         <StatusToggle
                           value={groupStatus}
@@ -1041,12 +1092,35 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       </div>
                     ) : null}
                   </div>
+                  {deleteMode && canManageManualLines ? (
+                    <div className="bulk-delete-bar">
+                      {brandTotals.map((item) => {
+                        const brandIds = group.lines
+                          .filter((line) => (line.marca ?? line.anunciante) === item.marca)
+                          .map((line) => line.id);
+                        const allBrandLinesSelected = brandIds.length > 0 && brandIds.every((id) => selectedDeleteIds.includes(id));
+
+                        return (
+                          <label className="select-all-brand" key={item.marca}>
+                            <input
+                              type="checkbox"
+                              checked={allBrandLinesSelected}
+                              onChange={() => toggleDeleteBrandSelection(group.lines, item.marca)}
+                              aria-label={`Seleccionar todas las lineas de ${item.marca}`}
+                            />
+                            Selecciona todas
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   <table>
                     <thead>
                       <tr>
                         <th>Marca</th>
                         <th>Plataforma</th>
                         <th>Objetivo</th>
+                        <th>Moneda</th>
                         <th>Presupuesto</th>
                         <th>Costo x resultado</th>
                         <th>TKT prom</th>
@@ -1068,7 +1142,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                                 id={`edit-marca-${line.id}`}
                                 openSelectId={openSelectId}
                                 onOpenSelect={setOpenSelectId}
-                                onChange={(value) => setLineDraft({ ...lineDraft, marca: value })}
+                                onChange={(value) => setLineDraft({ ...lineDraft, marca: value})}
                               />
                             ) : (
                               <div className="brand-cell">
@@ -1112,6 +1186,19 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                                 onChange={(value) => setLineDraft({ ...lineDraft, objetivo: value })}
                               />
                             ) : line.objetivo}
+                          </td>
+                          <td> 
+                            {editingLineId === line.id && lineDraft ? (
+                              <SelectField
+                                label=""
+                                value={lineDraft.moneda}
+                                options={[...currencies]}
+                                id={`edit-moneda-${line.id}`}
+                                openSelectId={openSelectId}
+                                onOpenSelect={setOpenSelectId}
+                                onChange={(value) => setLineDraft({ ...lineDraft, moneda: value as InvestmentCurrency })}
+                              />
+                            ): line.moneda}
                           </td>
                           <td>
                             {editingLineId === line.id && lineDraft ? (
@@ -1171,13 +1258,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <tr key={item.marca}>
                           <td>Total marca: {item.marca}</td>
                           <td></td>
-                          <td></td>
-                          <td>{formatMoney(item.presupuesto, group.lines[0].moneda)}</td>
-                          <td></td>
+                          <td>{formatCurrencyTotals(item.totals, 'presupuesto')}</td>
                           <td></td>
                           <td></td>
                           <td></td>
-                          <td>{formatMoney(item.fcProyectada, group.lines[0].moneda)}</td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
+                          <td>{formatCurrencyTotals(item.totals, 'fcProyectada')}</td>
                           <td hidden={!canManageManualLines}></td>
                         </tr>
                       ))}
@@ -1185,13 +1273,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <tr key={item.cliente}>
                           <td>Total cliente: {item.cliente}</td>
                           <td></td>
-                          <td></td>
-                          <td>{formatMoney(item.presupuesto, group.lines[0].moneda)}</td>
-                          <td></td>
+                          <td>{formatCurrencyTotals(item.totals, 'presupuesto')}</td>
                           <td></td>
                           <td></td>
                           <td></td>
-                          <td>{formatMoney(item.fcProyectada, group.lines[0].moneda)}</td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
+                          <td>{formatCurrencyTotals(item.totals, 'fcProyectada')}</td>
                           <td hidden={!canManageManualLines}></td>
                         </tr>
                       ))}
@@ -1545,9 +1634,50 @@ function CustomSelect({
   ));
   const selected = normalizedOptions.find((option) => option.value === value);
   const isOpen = openSelectId === id;
+  const [typeahead, setTypeahead] = useState('');
+  const filteredOptions = normalizedOptions.filter((option) => {
+    const query = typeahead.trim().toLowerCase();
+    if (!query) return true;
+    const label = option.label.toLowerCase();
+    const optionValue = option.value.toLowerCase();
+    return label.startsWith(query) || optionValue.startsWith(query) || label.includes(query) || optionValue.includes(query);
+  });
+
+  useEffect(() => {
+    if (!isOpen) {
+      setTypeahead('');
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!typeahead) return;
+    const timeout = window.setTimeout(() => setTypeahead(''), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [typeahead]);
+
+  function handleTypeahead(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      onOpenSelect(null);
+      return;
+    }
+
+    if (event.key === 'Backspace') {
+      setTypeahead((current) => current.slice(0, -1));
+      return;
+    }
+
+    if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    if (!isOpen) onOpenSelect(id);
+    setTypeahead((current) => `${current}${event.key}`);
+  }
 
   return (
-    <div className={`custom-select ${className} ${isOpen ? 'open' : ''} ${disabled ? 'disabled' : ''}`} data-dropdown-root="true">
+    <div
+      className={`custom-select ${className} ${isOpen ? 'open' : ''} ${disabled ? 'disabled' : ''}`}
+      data-dropdown-root="true"
+      onKeyDown={handleTypeahead}
+    >
       <button
         className="custom-select-trigger"
         type="button"
@@ -1561,7 +1691,7 @@ function CustomSelect({
       </button>
       {isOpen ? (
         <div className="custom-select-menu">
-          {normalizedOptions.map((option) => (
+          {filteredOptions.length > 0 ? filteredOptions.map((option) => (
             <button
               className={option.value === value ? 'selected' : ''}
               key={`${id}-${option.value || 'empty'}`}
@@ -1573,7 +1703,9 @@ function CustomSelect({
             >
               {option.label}
             </button>
-          ))}
+          )) : (
+            <div className="custom-select-empty">Sin resultados</div>
+          )}
         </div>
       ) : null}
     </div>

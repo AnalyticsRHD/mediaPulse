@@ -42,7 +42,9 @@ export class InvestmentsService {
       .filter((line) => includeDrafts || line.status === InvestmentStatus.PRESUPUESTO_OK)
       .sort((a, b) => this.sortManualLines(a, b));
     const totalBudget = lines.reduce((sum, line) => sum + line.presupuesto, 0);
-    const investmentLines = lines.map((line) => this.toInvestmentLine(line, totalBudget, days, diasRestantes, ritmo, rangeStartDate, rangeEndDate));
+    const builtLines = lines.map((line) => this.toInvestmentLine(line, totalBudget, days, diasRestantes, ritmo, rangeStartDate, rangeEndDate));
+    await this.persistConsumptionSnapshots(builtLines);
+    const investmentLines = builtLines.map((builtLine) => builtLine.line);
     const consumoTotal = investmentLines.reduce((sum, line) => sum + line.consumo, 0);
 
     return {
@@ -78,6 +80,9 @@ export class InvestmentsService {
       moneda: dto.moneda || InvestmentCurrency.ARS,
       status: dto.status || InvestmentStatus.EN_PROCESO,
       mes: this.currentMonth(),
+      lastConsumo: 0,
+      lastConsumoDia: 0,
+      lastConsumoUpdatedAt: null,
       plataforma: this.normalizePlatform(dto.plataforma)
     };
 
@@ -145,30 +150,70 @@ export class InvestmentsService {
     return filtered.sort((a, b) => this.sortManualLines(a, b));
   }
 
-  private toInvestmentLine(line: ManualInvestmentLine, totalBudget: number, days: number, diasRestantes: number, ritmo: number, startDate: string, endDate: string): InvestmentLine {
-    const consumo = this.getConsumption(line);
-    const consumoDia = this.getDateRangeConsumption(line, startDate, endDate);
+  private toInvestmentLine(
+    line: ManualInvestmentLine,
+    totalBudget: number,
+    days: number,
+    diasRestantes: number,
+    ritmo: number,
+    startDate: string,
+    endDate: string
+  ): {
+    line: InvestmentLine;
+    sourceLine: ManualInvestmentLine;
+    hasMonthlyMetrics: boolean;
+    hasDailyMetrics: boolean;
+  } {
+    const { consumo, consumoDia, hasMonthlyMetrics, hasDailyMetrics } = this.getConsumptionSnapshot(line, startDate, endDate);
     const share = totalBudget > 0 ? line.presupuesto / totalBudget : 0;
     const porcentajeConsumo = line.presupuesto > 0 ? consumo / line.presupuesto : 0;
     const resultadosProyectados = this.getProjectedResults(line);
 
     return {
-      ...line,
-      consumo,
-      consumoDia,
-      consumoAyer: consumoDia,
-      presupuestoDaily: days > 0 ? line.presupuesto / days : 0,
-      nuevoPresupuestoDiario: diasRestantes > 0 ? (line.presupuesto - consumo) / diasRestantes : 0,
-      share,
-      resultadosProyectados,
-      fcProyectada: this.isSalesObjective(line.objetivo) ? resultadosProyectados * line.tktPromedio : 0,
-      consumoRestante: line.presupuesto - consumo,
-      porcentajeConsumo,
-      desvio: porcentajeConsumo - ritmo
+      line: {
+        ...line,
+        consumo,
+        consumoDia,
+        consumoAyer: consumoDia,
+        presupuestoDaily: days > 0 ? line.presupuesto / days : 0,
+        nuevoPresupuestoDiario: diasRestantes > 0 ? (line.presupuesto - consumo) / diasRestantes : 0,
+        share,
+        resultadosProyectados,
+        fcProyectada: this.isSalesObjective(line.objetivo) ? resultadosProyectados * line.tktPromedio : 0,
+        consumoRestante: line.presupuesto - consumo,
+        porcentajeConsumo,
+        desvio: porcentajeConsumo - ritmo
+      },
+      sourceLine: line,
+      hasMonthlyMetrics,
+      hasDailyMetrics
     };
   }
 
-  private getConsumption(line: ManualInvestmentLine): number {
+  private getConsumptionSnapshot(line: ManualInvestmentLine, startDate: string, endDate: string): {
+    consumo: number;
+    consumoDia: number;
+    hasMonthlyMetrics: boolean;
+    hasDailyMetrics: boolean;
+  } {
+    const monthlyMetrics = this.getMonthlyMetrics(line);
+    const dailyMetrics = this.getDailyMetrics(line, startDate, endDate);
+    const consumo = monthlyMetrics.length > 0
+      ? monthlyMetrics.reduce((sum, metric) => sum + metric.spend, 0)
+      : line.lastConsumo || 0;
+    const consumoDia = dailyMetrics.length > 0
+      ? dailyMetrics.reduce((sum, metric) => sum + metric.spend, 0)
+      : line.lastConsumoDia || 0;
+
+    return {
+      consumo,
+      consumoDia,
+      hasMonthlyMetrics: monthlyMetrics.length > 0,
+      hasDailyMetrics: dailyMetrics.length > 0
+    };
+  }
+
+  private getMonthlyMetrics(line: ManualInvestmentLine) {
     const lineClient = this.normalizeReference(line.anunciante);
     const lineBrand = this.normalizeReference(line.marca || line.anunciante);
 
@@ -179,8 +224,7 @@ export class InvestmentsService {
         && this.normalizeReference(metric.marca) === lineBrand
         && this.normalizePlatform(metric.plataforma) === line.plataforma
         && metric.date.startsWith(line.mes)
-      ))
-      .reduce((sum, metric) => sum + metric.spend, 0);
+      ));
   }
 
   private getDateConsumption(line: ManualInvestmentLine, date: string): number {
@@ -188,6 +232,13 @@ export class InvestmentsService {
   }
 
   private getDateRangeConsumption(line: ManualInvestmentLine, startDate: string, endDate: string): number {
+    const dailyMetrics = this.getDailyMetrics(line, startDate, endDate);
+    return dailyMetrics.length > 0
+      ? dailyMetrics.reduce((sum, metric) => sum + metric.spend, 0)
+      : line.lastConsumoDia || 0;
+  }
+
+  private getDailyMetrics(line: ManualInvestmentLine, startDate: string, endDate: string) {
     const lineClient = this.normalizeReference(line.anunciante);
     const lineBrand = this.normalizeReference(line.marca || line.anunciante);
 
@@ -199,8 +250,7 @@ export class InvestmentsService {
         && this.normalizePlatform(metric.plataforma) === line.plataforma
         && metric.date >= startDate
         && metric.date <= endDate
-      ))
-      .reduce((sum, metric) => sum + metric.spend, 0);
+      ));
   }
 
   private normalizePlatform(platform: string): string {
@@ -309,7 +359,7 @@ export class InvestmentsService {
       this.manualLinesHydrated = true;
     } catch {
       this.manualLinesHydrated = false;
-      throw new ServiceUnavailableException('Could not load manual investments');
+      throw new ServiceUnavailableException('No se pudieron cargar las inversiones');
     }
   }
 
@@ -318,8 +368,46 @@ export class InvestmentsService {
       const persisted = await this.manualInvestmentsRepository.upsert(line);
       if (!persisted) throw new Error('Database is not configured');
     } catch {
-      throw new ServiceUnavailableException('Could not persist manual investment');
+      throw new ServiceUnavailableException('No se pudo persistir la inversión manual');
     }
+  }
+
+  private async persistConsumptionSnapshots(builtLines: Array<{
+    line: InvestmentLine;
+    sourceLine: ManualInvestmentLine;
+    hasMonthlyMetrics: boolean;
+    hasDailyMetrics: boolean;
+  }>): Promise<void> {
+    const now = new Date().toISOString();
+
+    await Promise.all(builtLines.map(async (builtLine) => {
+      if (!builtLine.hasMonthlyMetrics && !builtLine.hasDailyMetrics) return;
+
+      const nextLine: ManualInvestmentLine = {
+        ...builtLine.sourceLine,
+        lastConsumo: builtLine.hasMonthlyMetrics ? builtLine.line.consumo : builtLine.sourceLine.lastConsumo || 0,
+        lastConsumoDia: builtLine.hasDailyMetrics ? builtLine.line.consumoDia : builtLine.sourceLine.lastConsumoDia || 0,
+        lastConsumoUpdatedAt: now
+      };
+
+      if (
+        nextLine.lastConsumo === (builtLine.sourceLine.lastConsumo || 0)
+        && nextLine.lastConsumoDia === (builtLine.sourceLine.lastConsumoDia || 0)
+      ) {
+        return;
+      }
+
+      try {
+        await this.manualInvestmentsRepository.updateConsumptionSnapshot(nextLine.id, {
+          lastConsumo: nextLine.lastConsumo || 0,
+          lastConsumoDia: nextLine.lastConsumoDia || 0,
+          lastConsumoUpdatedAt: nextLine.lastConsumoUpdatedAt || now
+        });
+        this.manualLines.set(nextLine.id, nextLine);
+      } catch {
+        // The control view should still render even if the snapshot persistence fails.
+      }
+    }));
   }
 
   private async persistManualLog(action: 'CREATED' | 'UPDATED' | 'DELETED', line: ManualInvestmentLine, user?: AuthUser): Promise<void> {

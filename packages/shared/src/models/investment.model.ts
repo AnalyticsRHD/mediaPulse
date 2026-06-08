@@ -21,6 +21,9 @@ export interface ManualInvestmentLine {
   costoPorResultado: number;
   tktPromedio: number;
   mes: string;
+  lastConsumo?: number;
+  lastConsumoDia?: number;
+  lastConsumoUpdatedAt?: string | null;
   createdAt?: string;
   updatedAt?: string | null;
   deletedAt?: string | null;

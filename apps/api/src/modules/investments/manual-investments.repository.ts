@@ -45,6 +45,9 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         costo_por_resultado numeric NOT NULL,
         tkt_promedio numeric NOT NULL,
         mes char(7) NOT NULL,
+        last_consumo numeric NOT NULL DEFAULT 0,
+        last_consumo_dia numeric NOT NULL DEFAULT 0,
+        last_consumo_updated_at timestamptz NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(),
         deleted_at timestamptz NULL
@@ -53,7 +56,10 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       ALTER TABLE manual_investment_lines
         ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
         ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now(),
-        ADD COLUMN IF NOT EXISTS deleted_at timestamptz NULL;
+        ADD COLUMN IF NOT EXISTS deleted_at timestamptz NULL,
+        ADD COLUMN IF NOT EXISTS last_consumo numeric NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS last_consumo_dia numeric NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS last_consumo_updated_at timestamptz NULL;
 
       CREATE TABLE IF NOT EXISTS manual_investment_logs (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -89,6 +95,9 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         costo_por_resultado,
         tkt_promedio,
         mes,
+        last_consumo,
+        last_consumo_dia,
+        last_consumo_updated_at,
         created_at,
         updated_at,
         deleted_at
@@ -116,9 +125,12 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
           presupuesto,
           costo_por_resultado,
           tkt_promedio,
-          mes
+          mes,
+          last_consumo,
+          last_consumo_dia,
+          last_consumo_updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (id) DO UPDATE SET
           anunciante = EXCLUDED.anunciante,
           marca = EXCLUDED.marca,
@@ -130,6 +142,9 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
           costo_por_resultado = EXCLUDED.costo_por_resultado,
           tkt_promedio = EXCLUDED.tkt_promedio,
           mes = EXCLUDED.mes,
+          last_consumo = EXCLUDED.last_consumo,
+          last_consumo_dia = EXCLUDED.last_consumo_dia,
+          last_consumo_updated_at = EXCLUDED.last_consumo_updated_at,
           updated_at = now();
       `,
       [
@@ -143,8 +158,33 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         line.presupuesto,
         line.costoPorResultado,
         line.tktPromedio,
-        line.mes
+        line.mes,
+        line.lastConsumo || 0,
+        line.lastConsumoDia || 0,
+        line.lastConsumoUpdatedAt || null
       ]
+    );
+
+    return true;
+  }
+
+  async updateConsumptionSnapshot(
+    id: string,
+    snapshot: { lastConsumo: number; lastConsumoDia: number; lastConsumoUpdatedAt: string }
+  ): Promise<boolean> {
+    if (!(await this.init()) || !this.pool) return false;
+
+    await this.pool.query(
+      `
+        UPDATE manual_investment_lines
+        SET
+          last_consumo = $2,
+          last_consumo_dia = $3,
+          last_consumo_updated_at = $4
+        WHERE id = $1
+          AND deleted_at IS NULL;
+      `,
+      [id, snapshot.lastConsumo, snapshot.lastConsumoDia, snapshot.lastConsumoUpdatedAt]
     );
 
     return true;
@@ -219,6 +259,9 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       costoPorResultado: Number(row.costo_por_resultado),
       tktPromedio: Number(row.tkt_promedio),
       mes: String(row.mes),
+      lastConsumo: Number(row.last_consumo || 0),
+      lastConsumoDia: Number(row.last_consumo_dia || 0),
+      lastConsumoUpdatedAt: row.last_consumo_updated_at ? new Date(String(row.last_consumo_updated_at)).toISOString() : null,
       createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : undefined,
       updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null,
       deletedAt: row.deleted_at ? new Date(String(row.deleted_at)).toISOString() : null

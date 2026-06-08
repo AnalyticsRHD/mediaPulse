@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import logo from '../../assets/logo.png';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
 
@@ -67,7 +68,8 @@ export default function LoginPage() {
       </section>
       <section className="login-panel">
         <form className="login-page-form" onSubmit={handleSubmit}>
-          <div>
+          <div className="login-heading">
+            <img className="login-logo" src={logo.src} alt="MediaPulse RHD" width={1200} height={1200} />
             <h1>Bienvenido</h1>
           </div>
           <label className="field">
