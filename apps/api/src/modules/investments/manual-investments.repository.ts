@@ -41,6 +41,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         status text NOT NULL,
         plataforma text NOT NULL,
         objetivo text NOT NULL,
+        campana text NULL,
         presupuesto numeric NOT NULL,
         costo_por_resultado numeric NOT NULL,
         tkt_promedio numeric NOT NULL,
@@ -57,6 +58,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
         ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now(),
         ADD COLUMN IF NOT EXISTS deleted_at timestamptz NULL,
+        ADD COLUMN IF NOT EXISTS campana text NULL,
         ADD COLUMN IF NOT EXISTS last_consumo numeric NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS last_consumo_dia numeric NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS last_consumo_updated_at timestamptz NULL;
@@ -91,6 +93,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         status,
         plataforma,
         objetivo,
+        campana,
         presupuesto,
         costo_por_resultado,
         tkt_promedio,
@@ -103,7 +106,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         deleted_at
       FROM manual_investment_lines
       WHERE deleted_at IS NULL
-      ORDER BY anunciante, marca, moneda, plataforma, objetivo;
+      ORDER BY anunciante, marca, moneda, plataforma, objetivo, campana;
     `);
 
     return result.rows.map((row) => this.toManualLine(row));
@@ -122,6 +125,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
           status,
           plataforma,
           objetivo,
+          campana,
           presupuesto,
           costo_por_resultado,
           tkt_promedio,
@@ -130,7 +134,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
           last_consumo_dia,
           last_consumo_updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (id) DO UPDATE SET
           anunciante = EXCLUDED.anunciante,
           marca = EXCLUDED.marca,
@@ -138,6 +142,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
           status = EXCLUDED.status,
           plataforma = EXCLUDED.plataforma,
           objetivo = EXCLUDED.objetivo,
+          campana = EXCLUDED.campana,
           presupuesto = EXCLUDED.presupuesto,
           costo_por_resultado = EXCLUDED.costo_por_resultado,
           tkt_promedio = EXCLUDED.tkt_promedio,
@@ -155,6 +160,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         line.status,
         line.plataforma,
         line.objetivo,
+        line.campana?.trim() || null,
         line.presupuesto,
         line.costoPorResultado,
         line.tktPromedio,
@@ -255,6 +261,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       status: String(row.status) as InvestmentStatus,
       plataforma: String(row.plataforma),
       objetivo: String(row.objetivo),
+      campana: row.campana ? String(row.campana) : undefined,
       presupuesto: Number(row.presupuesto),
       costoPorResultado: Number(row.costo_por_resultado),
       tktPromedio: Number(row.tkt_promedio),

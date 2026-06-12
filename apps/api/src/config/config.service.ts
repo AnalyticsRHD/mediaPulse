@@ -24,11 +24,67 @@ export class ConfigService {
   }
 
   get metaAccessToken(): string {
-    return process.env.META_ACCESS_TOKEN || '';
+    return this.cleanPlaceholder(process.env.META_ACCESS_TOKEN || '');
+  }
+
+  get metaApiBaseUrl(): string {
+    return process.env.META_API_BASE_URL || 'https://graph.facebook.com/v21.0';
+  }
+
+  get metaAccountIds(): string[] {
+    const raw = process.env.META_ACCOUNT_IDS || process.env.META_ACCOUNT_ID || '';
+    return raw
+      .split(',')
+      .map((value) => this.cleanPlaceholder(value).replace(/^act_/i, '').trim())
+      .filter(Boolean);
+  }
+
+  get metaSyncTimeoutSeconds(): number {
+    return parseInt(process.env.META_SYNC_TIMEOUT_SECONDS || '120', 10);
+  }
+
+  get metaMaxAccountsPerSync(): number {
+    return parseInt(process.env.META_MAX_ACCOUNTS_PER_SYNC || '100', 10);
   }
 
   get googleAccessToken(): string {
     return process.env.GOOGLE_ACCESS_TOKEN || '';
+  }
+
+  get googleAdsApiBaseUrl(): string {
+    return process.env.GOOGLE_ADS_API_BASE_URL || 'https://googleads.googleapis.com/v21';
+  }
+
+  get googleAdsDeveloperToken(): string {
+    return this.cleanPlaceholder(process.env.GOOGLE_ADS_DEVELOPER_TOKEN || '');
+  }
+
+  get googleAdsClientId(): string {
+    return this.cleanPlaceholder(process.env.GOOGLE_ADS_CLIENT_ID || '');
+  }
+
+  get googleAdsClientSecret(): string {
+    return this.cleanPlaceholder(process.env.GOOGLE_ADS_CLIENT_SECRET || '');
+  }
+
+  get googleAdsRefreshToken(): string {
+    return this.cleanPlaceholder(process.env.GOOGLE_ADS_REFRESH_TOKEN || '');
+  }
+
+  get googleAdsLoginCustomerId(): string {
+    return this.cleanCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
+  }
+
+  get googleAdsCustomerIds(): string[] {
+    const raw = process.env.GOOGLE_ADS_CUSTOMER_IDS || process.env.GOOGLE_CUSTOMER_ID || '';
+    return raw
+      .split(',')
+      .map((value) => this.cleanCustomerId(value))
+      .filter(Boolean);
+  }
+
+  get googleAdsSyncTimeoutSeconds(): number {
+    return parseInt(process.env.GOOGLE_ADS_SYNC_TIMEOUT_SECONDS || '120', 10);
   }
 
   get supermetricsApiBaseUrl(): string {
@@ -45,6 +101,13 @@ export class ConfigService {
 
   get supermetricsGoogleAdsQueryJson(): string {
     return process.env.SUPERMETRICS_GOOGLE_ADS_QUERY_JSON || '';
+  }
+
+  get supermetricsGoogleAdsExcludedAccountIds(): string[] {
+    return (process.env.SUPERMETRICS_GOOGLE_ADS_EXCLUDED_ACCOUNT_IDS || '')
+      .split(',')
+      .map((accountId) => accountId.trim())
+      .filter(Boolean);
   }
 
   get supermetricsLinkedinAdsQueryJson(): string {
@@ -186,5 +249,9 @@ export class ConfigService {
     if (!clean) return '';
     if (/^(your_|tu_|advertiser_id_|placeholder)/i.test(clean)) return '';
     return clean;
+  }
+
+  private cleanCustomerId(value: string): string {
+    return this.cleanPlaceholder(value).replace(/-/g, '').trim();
   }
 }

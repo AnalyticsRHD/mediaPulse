@@ -28,6 +28,7 @@ const baseObjectives = [
   'Interaccion'
 ];
 const googleObjectiveSuffixes = ['PMAX', 'Search'];
+const platformOptions = ['META', 'Google', 'Merc. Libre', 'TikTok'];
 
 type InvestmentCurrency = typeof currencies[number];
 type InvestmentStatus = typeof investmentStatuses[number];
@@ -80,6 +81,7 @@ type InvestmentLine = {
   status: InvestmentStatus;
   plataforma: string;
   objetivo: string;
+  campana?: string;
   presupuesto: number;
   costoPorResultado: number;
   tktPromedio: number;
@@ -121,6 +123,7 @@ type ManualForm = {
   status: InvestmentStatus;
   plataforma: string;
   objetivo: string;
+  campana: string;
   presupuesto: string;
   costoPorResultado: string;
   tktPromedio: string;
@@ -162,6 +165,7 @@ const defaultForm: ManualForm = {
   status: 'EN_PROCESO',
   plataforma: 'META',
   objetivo: 'Ventas',
+  campana: '',
   presupuesto: '',
   costoPorResultado: '',
   tktPromedio: '',
@@ -235,7 +239,7 @@ function formatMoney(value: number, moneda: InvestmentCurrency = 'CHL') {
 }
 
 function getObjectiveOptions(platform: string) {
-  if (platform !== 'Google') return baseObjectives;
+  if (normalizePlatformName(platform) !== 'google') return baseObjectives;
 
   const googleObjectiveBases = ['Trafico', 'Leads', 'Ventas'];
   const googleObjectives = googleObjectiveBases.flatMap((objective) => (
@@ -410,6 +414,16 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     )).sort();
   }, [manualData, previewClientFilter]);
   const objectiveOptions = useMemo(() => getObjectiveOptions(form.plataforma), [form.plataforma]);
+  const editBrandOptions = useMemo(() => {
+    if (!lineDraft?.anunciante) return [];
+
+    return uniqueValues([
+      ...(brandCatalog[lineDraft.anunciante] ?? []),
+      ...((manualData?.lines ?? [])
+        .filter((line) => line.anunciante === lineDraft.anunciante)
+        .map((line) => line.marca ?? ''))
+    ]);
+  }, [brandCatalog, lineDraft?.anunciante, manualData]);
 
   const groupedLines = useMemo(() => {
     const groups = new Map<string, InvestmentLine[]>();
@@ -423,11 +437,33 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     return Array.from(groups.entries()).map(([key, lines]) => ({ key, lines }));
   }, [manualData, previewClientFilter, previewBrandFilter]);
 
-  async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
+  async function requestJson<T>(url: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
     const headers = new Headers(options?.headers);
     if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
 
-    const response = await fetch(url, { ...options, headers });
+    const timeoutMs = options?.timeoutMs;
+    const controller = timeoutMs ? new AbortController() : null;
+    const timeout = controller
+      ? window.setTimeout(() => controller.abort(), timeoutMs)
+      : undefined;
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+        signal: controller?.signal || options?.signal
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('La sincronizacion tardo demasiado. Probemos con menos cuentas o una fuente puntual.');
+      }
+
+      throw error;
+    } finally {
+      if (timeout) window.clearTimeout(timeout);
+    }
+
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
       if (response.status === 401) {
@@ -585,7 +621,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     try {
       setErrorMessage('');
       await requestJson(`${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${selectedRange.endDate}`, {
-        method: 'POST'
+        method: 'POST',
+        timeoutMs: 90000
       });
       await loadInvestments();
     } catch (error) {
@@ -669,6 +706,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
           moneda: line.moneda,
           plataforma: line.plataforma,
           objetivo: line.objetivo,
+          campana: line.campana ?? '',
           presupuesto: line.presupuesto,
           costoPorResultado: line.costoPorResultado,
           tktPromedio: line.tktPromedio,
@@ -698,6 +736,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
           moneda: line.moneda,
           plataforma: line.plataforma,
           objetivo: line.objetivo,
+          campana: line.campana ?? '',
           presupuesto: line.presupuesto,
           costoPorResultado: line.costoPorResultado,
           tktPromedio: line.tktPromedio,
@@ -722,6 +761,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       moneda: line.moneda,
       plataforma: line.plataforma,
       objetivo: line.objetivo,
+      campana: line.campana ?? '',
       presupuesto: String(line.presupuesto),
       costoPorResultado: String(line.costoPorResultado),
       tktPromedio: String(line.tktPromedio),
@@ -909,6 +949,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     onToggle={setOpenControlFilter}
                     onChange={(value) => setControlFilters((current) => ({ ...current, objetivo: value }))}
                   />
+                  <th>Campaña</th>
                   {Object.entries(sortLabels).map(([key, label]) => (
                     <SortHeader
                       key={key}
@@ -928,6 +969,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     <td>{line.moneda}</td>
                     <td><span className={`platform ${platformClassName(line.plataforma)}`}>{formatPlatformLabel(line.plataforma)}</span></td>
                     <td>{line.objetivo}</td>
+                    <td>{line.campana || '-'}</td>
                     <td>{formatMoney(line.presupuesto, line.moneda)}</td>
                     <td>{formatMoney(line.consumo, line.moneda)}</td>
                     <td>{Math.round(line.porcentajeConsumo * 100)}%</td>
@@ -942,7 +984,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 ))}
                 {!loading && filteredControlLines.length === 0 ? (
                   <tr>
-                    <td colSpan={15} className="empty">No hay inversiones cargadas para este mes.</td>
+                    <td colSpan={16} className="empty">No hay inversiones cargadas para este mes.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -993,6 +1035,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                   }}
                 />
                 <SelectField label="Objetivo" value={form.objetivo} options={objectiveOptions} id="manual-objetivo" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, objetivo: value })} />
+                <Field label="Campaña" value={form.campana} required={false} onChange={(value) => setForm({ ...form, campana: value })} />
                 <Field label="Presupuesto" type="number" value={form.presupuesto} onChange={(value) => setForm({ ...form, presupuesto: value })} />
                 <Field label="Costo x resultado" type="number" value={form.costoPorResultado} onChange={(value) => setForm({ ...form, costoPorResultado: value })} />
                 <Field label="TKT prom" type="number" value={form.tktPromedio} onChange={(value) => setForm({ ...form, tktPromedio: value })} />
@@ -1120,6 +1163,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <th>Marca</th>
                         <th>Plataforma</th>
                         <th>Objetivo</th>
+                        <th>Campaña</th>
                         <th>Moneda</th>
                         <th>Presupuesto</th>
                         <th>Costo x resultado</th>
@@ -1135,10 +1179,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <tr key={line.id}>
                           <td>
                             {editingLineId === line.id && lineDraft ? (
-                              <SelectField
-                                label=""
+                              <CellSelect
                                 value={lineDraft.marca}
-                                options={brandCatalog[lineDraft.anunciante] ?? []}
+                                options={editBrandOptions}
                                 id={`edit-marca-${line.id}`}
                                 openSelectId={openSelectId}
                                 onOpenSelect={setOpenSelectId}
@@ -1160,10 +1203,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           </td>
                           <td>
                             {editingLineId === line.id && lineDraft ? (
-                              <SelectField
-                                label=""
+                              <CellSelect
                                 value={lineDraft.plataforma}
-                                options={['META', 'Google', 'Merc. Libre', 'TikTok']}
+                                options={platformOptions}
                                 id={`edit-plataforma-${line.id}`}
                                 openSelectId={openSelectId}
                                 onOpenSelect={setOpenSelectId}
@@ -1176,8 +1218,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           </td>
                           <td>
                             {editingLineId === line.id && lineDraft ? (
-                              <SelectField
-                                label=""
+                              <CellSelect
                                 value={lineDraft.objetivo}
                                 options={getObjectiveOptions(lineDraft.plataforma)}
                                 id={`edit-objetivo-${line.id}`}
@@ -1187,10 +1228,19 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                               />
                             ) : line.objetivo}
                           </td>
+                          <td>
+                            {editingLineId === line.id && lineDraft ? (
+                              <input
+                                className="budget-input campaign-input"
+                                value={lineDraft.campana}
+                                onChange={(event) => setLineDraft({ ...lineDraft, campana: event.target.value })}
+                                placeholder="Texto conjunto"
+                              />
+                            ) : line.campana || '-'}
+                          </td>
                           <td> 
                             {editingLineId === line.id && lineDraft ? (
-                              <SelectField
-                                label=""
+                              <CellSelect
                                 value={lineDraft.moneda}
                                 options={[...currencies]}
                                 id={`edit-moneda-${line.id}`}
@@ -1258,9 +1308,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <tr key={item.marca}>
                           <td>Total marca: {item.marca}</td>
                           <td></td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
                           <td>{formatCurrencyTotals(item.totals, 'presupuesto')}</td>
-                          <td></td>
-                          <td></td>
                           <td></td>
                           <td></td>
                           <td></td>
@@ -1273,9 +1324,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <tr key={item.cliente}>
                           <td>Total cliente: {item.cliente}</td>
                           <td></td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
                           <td>{formatCurrencyTotals(item.totals, 'presupuesto')}</td>
-                          <td></td>
-                          <td></td>
                           <td></td>
                           <td></td>
                           <td></td>
@@ -1632,21 +1684,23 @@ function CustomSelect({
   const normalizedOptions = options.map((option) => (
     typeof option === 'string' ? { label: option, value: option } : option
   ));
-  const selected = normalizedOptions.find((option) => option.value === value);
+  const normalizedValue = value.trim().toLowerCase();
+  const selected = normalizedOptions.find((option) => option.value === value)
+    ?? normalizedOptions.find((option) => option.value.trim().toLowerCase() === normalizedValue)
+    ?? normalizedOptions.find((option) => option.label.trim().toLowerCase() === normalizedValue);
   const isOpen = openSelectId === id;
   const [typeahead, setTypeahead] = useState('');
-  const filteredOptions = normalizedOptions.filter((option) => {
-    const query = typeahead.trim().toLowerCase();
-    if (!query) return true;
-    const label = option.label.toLowerCase();
-    const optionValue = option.value.toLowerCase();
-    return label.startsWith(query) || optionValue.startsWith(query) || label.includes(query) || optionValue.includes(query);
-  });
+  const typeaheadQuery = typeahead.trim().toLowerCase();
+  const typeaheadMatch = typeaheadQuery
+    ? normalizedOptions.find((option) => {
+      const label = option.label.toLowerCase();
+      const optionValue = option.value.toLowerCase();
+      return label.startsWith(typeaheadQuery) || optionValue.startsWith(typeaheadQuery);
+    })
+    : null;
 
   useEffect(() => {
-    if (!isOpen) {
-      setTypeahead('');
-    }
+    setTypeahead('');
   }, [isOpen]);
 
   useEffect(() => {
@@ -1682,7 +1736,10 @@ function CustomSelect({
         className="custom-select-trigger"
         type="button"
         disabled={disabled}
-        onClick={() => onOpenSelect(isOpen ? null : id)}
+        onClick={() => {
+          setTypeahead('');
+          onOpenSelect(isOpen ? null : id);
+        }}
         aria-label={ariaLabel || placeholder || id}
         aria-expanded={isOpen}
       >
@@ -1691,12 +1748,16 @@ function CustomSelect({
       </button>
       {isOpen ? (
         <div className="custom-select-menu">
-          {filteredOptions.length > 0 ? filteredOptions.map((option) => (
+          {normalizedOptions.length > 0 ? normalizedOptions.map((option) => (
             <button
-              className={option.value === value ? 'selected' : ''}
+              className={[
+                option.value === value ? 'selected' : '',
+                typeaheadMatch?.value === option.value ? 'typeahead-match' : ''
+              ].filter(Boolean).join(' ')}
               key={`${id}-${option.value || 'empty'}`}
               type="button"
               onClick={() => {
+                setTypeahead('');
                 onChange(option.value);
                 onOpenSelect(null);
               }}
@@ -1712,11 +1773,11 @@ function CustomSelect({
   );
 }
 
-function Field({ label, value, type = 'text', onChange }: { label: string; value: string; type?: string; onChange: (value: string) => void }) {
+function Field({ label, value, type = 'text', required = true, onChange }: { label: string; value: string; type?: string; required?: boolean; onChange: (value: string) => void }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} required />
+      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} required={required} />
     </label>
   );
 }
@@ -1756,5 +1817,33 @@ function SelectField({
         placeholder={placeholder}
       />
     </label>
+  );
+}
+
+function CellSelect({
+  id,
+  value,
+  options,
+  openSelectId,
+  onOpenSelect,
+  onChange
+}: {
+  id: string;
+  value: string;
+  options: string[];
+  openSelectId: string | null;
+  onOpenSelect: (id: string | null) => void;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <CustomSelect
+      id={id}
+      className="cell-select"
+      value={value}
+      options={options}
+      openSelectId={openSelectId}
+      onOpenSelect={onOpenSelect}
+      onChange={onChange}
+    />
   );
 }

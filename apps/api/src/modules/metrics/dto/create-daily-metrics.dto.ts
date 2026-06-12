@@ -21,6 +21,18 @@ export class CreateDailyMetricsDto {
 
   @IsOptional()
   @IsString()
+  adSetName?: string;
+
+  @IsOptional()
+  @IsString()
+  adGroupName?: string;
+
+  @IsOptional()
+  @IsString()
+  objetivo?: string;
+
+  @IsOptional()
+  @IsString()
   referencia?: string;
 
   @IsOptional()
@@ -64,6 +76,18 @@ export class UpdateDailyMetricsDto {
   @IsOptional()
   @IsString()
   accountName?: string;
+
+  @IsOptional()
+  @IsString()
+  adSetName?: string;
+
+  @IsOptional()
+  @IsString()
+  adGroupName?: string;
+
+  @IsOptional()
+  @IsString()
+  objetivo?: string;
 
   @IsOptional()
   @IsString()

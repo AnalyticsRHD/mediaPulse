@@ -85,6 +85,9 @@ export class BrandMappingService {
   async resolve(reference: string): Promise<BrandMapping> {
     await this.hydrateMappings();
     const normalizedReference = this.normalize(reference);
+    const alias = this.resolveAlias(normalizedReference);
+    if (alias) return alias;
+
     const exact = this.mappings.find((item) => this.normalize(item.marca) === normalizedReference);
     if (exact) return exact;
 
@@ -107,6 +110,14 @@ export class BrandMappingService {
       .replace(/[_\s]+/g, ' ')
       .trim()
       .toLowerCase();
+  }
+
+  private resolveAlias(normalizedReference: string): BrandMapping | null {
+    if (normalizedReference.includes('fundacion gls')) {
+      return { cliente: 'LONDON', marca: 'London Fundación' };
+    }
+
+    return null;
   }
 
   private toTitleCase(value: string): string {

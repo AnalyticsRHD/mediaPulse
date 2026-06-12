@@ -75,8 +75,11 @@ export class MetricsService {
     return {
       ...metrics,
       referencia: metrics.referencia || metrics.marca || metrics.cliente,
+      objetivo: metrics.objetivo,
       accountId: metrics.accountId,
       accountName: metrics.accountName,
+      adSetName: metrics.adSetName,
+      adGroupName: metrics.adGroupName,
       granularity: metrics.granularity || 'daily',
       spend: Number(metrics.spend || 0),
       impressions: Number(metrics.impressions || 0),

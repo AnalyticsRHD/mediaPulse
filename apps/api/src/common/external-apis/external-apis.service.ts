@@ -4,14 +4,26 @@ import { ConfigService } from '../../config/config.service';
 import { DailyMetrics } from '@mediapulse/shared';
 import { BrandMappingService } from '../brand-mapping/brand-mapping.service';
 
-export type SupermetricsSource = 'google' | 'meta' | 'linkedin';
+export type SupermetricsSource = 'linkedin';
 export type SupermetricsScope = 'monthly' | 'daily';
-export type NativeAdsSource = 'tiktok' | 'mercadolibre';
+export type NativeAdsSource = 'google' | 'meta' | 'tiktok' | 'mercadolibre';
 export type AdsMetricsSource = SupermetricsSource | NativeAdsSource;
 
 type SupermetricsSourceConfig = {
   platform: string;
   queryJson: string;
+};
+
+type AdsSheetColumnMap = {
+  month: number;
+  accountName: number;
+  campaignName?: number;
+  adSetName?: number;
+  adGroupName?: number;
+  spend: number;
+  conversions?: number;
+  revenue?: number;
+  referencia?: number;
 };
 
 @Injectable()
@@ -50,35 +62,52 @@ export class ExternalApisService {
       throw new ServiceUnavailableException(`Supermetrics ${source} query is not configured correctly`);
     }
 
-    try {
-      const datedQuery = this.withDateRange(query, scope, date);
-      const response = await axios.get(`${this.configService.supermetricsApiBaseUrl}/query/data/json`, {
-        params: {
-          json: JSON.stringify({
-            ...datedQuery,
-            api_key: apiKey
-          })
-        },
-        timeout: this.configService.supermetricsSyncTimeoutSeconds * 1000
-      });
+    const datedQuery = this.withDateRange(
+      query,
+      scope,
+      date
+    );
 
+    try {
+      const response = await this.requestSupermetricsData(datedQuery, apiKey);
       return this.parseSupermetricsResponse(response.data, sourceConfig.platform, scope, datedQuery.date_range_type, date);
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const detail = this.axiosDetail(error);
-        this.logExternalSyncFailure(`Supermetrics ${source} ${scope}`, detail);
-        const sheetsMetrics = await this.fetchAdsSheetsMetrics(source, scope, date);
-        if (sheetsMetrics.length > 0 || this.configService.adsSheetsSourceSpreadsheetId) return sheetsMetrics;
-        throw new BadGatewayException(`Supermetrics ${source} sync failed (${detail})`);
-      }
-
-      this.logger.error(`Supermetrics ${source} ${scope} sync failed: ${error instanceof Error ? error.message : String(error)}`);
-      throw new ServiceUnavailableException(`Supermetrics ${source} sync failed`);
+      return this.handleSupermetricsFailure(error, source, scope, date);
     }
   }
 
+  private requestSupermetricsData(query: any, apiKey: string) {
+    return axios.get(`${this.configService.supermetricsApiBaseUrl}/query/data/json`, {
+      params: {
+        json: JSON.stringify({
+          ...query,
+          api_key: apiKey
+        })
+      },
+      timeout: this.configService.supermetricsSyncTimeoutSeconds * 1000
+    });
+  }
+
+  private async handleSupermetricsFailure(
+    error: unknown,
+    source: SupermetricsSource,
+    scope: SupermetricsScope,
+    date: string
+  ): Promise<DailyMetrics[]> {
+    if (axios.isAxiosError(error)) {
+      const detail = this.axiosDetail(error);
+      this.logExternalSyncFailure(`Supermetrics ${source} ${scope}`, detail);
+      const sheetsMetrics = await this.fetchAdsSheetsMetrics(source, scope, date);
+      if (sheetsMetrics.length > 0 || this.configService.adsSheetsSourceSpreadsheetId) return sheetsMetrics;
+      throw new BadGatewayException(`Supermetrics ${source} sync failed (${detail})`);
+    }
+
+    this.logger.error(`Supermetrics ${source} ${scope} sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new ServiceUnavailableException(`Supermetrics ${source} sync failed`);
+  }
+
   async fetchSupermetricsFacebookAds(date?: string): Promise<DailyMetrics[]> {
-    return this.fetchSupermetricsMetrics('meta', date ? 'daily' : 'monthly', date);
+    return this.fetchMetaAdsMetrics(date ? 'daily' : 'monthly', date);
   }
 
   async fetchNativeAdsMetrics(
@@ -86,8 +115,401 @@ export class ExternalApisService {
     scope: SupermetricsScope,
     date = this.today()
   ): Promise<DailyMetrics[]> {
+    if (source === 'google') return this.fetchGoogleAdsMetrics(scope, date);
+    if (source === 'meta') return this.fetchMetaAdsMetrics(scope, date);
     if (source === 'tiktok') return this.fetchTikTokMetrics(scope, date);
     return this.fetchMercadoLibreMetrics(scope, date);
+  }
+
+  async fetchMetaAdsMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+    const accessToken = this.configService.metaAccessToken;
+    const accountIds = this.configService.metaAccountIds;
+
+    if (!accessToken || accountIds.length === 0) {
+      this.warnMissingConfig('meta-marketing-api', 'Meta access token or ad account ids not configured.');
+      return [];
+    }
+
+    const maxAccounts = this.configService.metaMaxAccountsPerSync;
+    if (accountIds.length > maxAccounts) {
+      this.logger.warn(
+        `Meta sync skipped: ${accountIds.length} ad accounts configured. Keep META_ACCOUNT_IDS under ${maxAccounts} accounts or increase META_MAX_ACCOUNTS_PER_SYNC.`
+      );
+      return [];
+    }
+
+    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const endDate = date;
+    const aggregated = new Map<string, {
+      date: string;
+      accountId: string;
+      accountName: string;
+      campaignId: string;
+      campaignName: string;
+      adSetId: string;
+      adSetName: string;
+      spend: number;
+      impressions: number;
+      clicks: number;
+      conversions: number;
+      revenue: number;
+    }>();
+
+    const accountBatches = this.chunkArray(accountIds, 8);
+    let fetchedRows = 0;
+    let filteredRows = 0;
+
+    for (const batch of accountBatches) {
+      const batchResults = await Promise.all(
+        batch.map(async (accountId) => ({
+          accountId,
+          rows: await this.fetchMetaAccountInsights(accountId, startDate, endDate, accessToken)
+        }))
+      );
+
+      for (const { accountId, rows } of batchResults) {
+        fetchedRows += rows.length;
+        for (const row of rows) {
+          const accountName = String(row.account_name || row.accountName || '');
+          if (accountName && !this.isManagedAdsAccount(accountName)) {
+            filteredRows += 1;
+            continue;
+          }
+
+          const spend = this.numberValue(row.spend);
+          if (!spend) continue;
+
+          const adSetName = String(row.adset_name || row.adSetName || '');
+          const adSetId = String(row.adset_id || row.adSetId || this.normalizeHeader(adSetName));
+          const campaignName = String(row.campaign_name || row.campaignName || '');
+          const campaignId = String(row.campaign_id || row.campaignId || this.normalizeHeader(campaignName));
+          const metricDate = scope === 'monthly' ? this.monthStart(date) : String(row.date_start || date).slice(0, 10);
+          const key = [accountId, campaignId, adSetId, scope, metricDate].join('||');
+          const current = aggregated.get(key) || {
+            date: metricDate,
+            accountId,
+            accountName,
+            campaignId,
+            campaignName,
+            adSetId,
+            adSetName,
+            spend: 0,
+            impressions: 0,
+            clicks: 0,
+            conversions: 0,
+            revenue: 0
+          };
+
+          current.spend += spend;
+          current.impressions += this.numberValue(row.impressions);
+          current.clicks += this.numberValue(row.clicks);
+          current.conversions += this.sumMetaActions(row.actions, ['lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead', 'purchase', 'omni_purchase']);
+          current.revenue += this.sumMetaActions(row.action_values, ['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase']);
+          aggregated.set(key, current);
+        }
+      }
+    }
+
+    this.logger.log(
+      `Meta ${scope} sync read ${fetchedRows} rows, filtered ${filteredRows}, aggregated ${aggregated.size} rows.`
+    );
+
+    const metrics: DailyMetrics[] = [];
+
+    for (const item of aggregated.values()) {
+      const referencia = this.inferReference(item.accountName) || item.accountName;
+      const mapping = await this.brandMappingService.resolve(referencia);
+      const metricCampaignId = [
+        'META',
+        item.accountId,
+        item.campaignId,
+        item.adSetId,
+        scope,
+        item.date
+      ].join('-');
+
+      metrics.push({
+        date: item.date,
+        cliente: mapping.cliente,
+        marca: mapping.marca,
+        referencia,
+        accountId: item.accountId,
+        accountName: item.accountName,
+        plataforma: 'META',
+        campaignId: metricCampaignId,
+        campaignName: item.campaignName || item.adSetName || item.accountName,
+        adSetName: item.adSetName,
+        objetivo: this.inferObjective(item.campaignName || item.adSetName),
+        granularity: scope,
+        spend: this.round2(item.spend),
+        impressions: item.impressions,
+        clicks: item.clicks,
+        conversions: item.conversions,
+        revenue: item.revenue
+      });
+    }
+
+    return metrics;
+  }
+
+  private async fetchMetaAccountInsights(accountId: string, startDate: string, endDate: string, accessToken: string): Promise<any[]> {
+    const rows: any[] = [];
+    let nextUrl = `${this.configService.metaApiBaseUrl}/act_${accountId}/insights`;
+    let params: Record<string, any> | undefined = {
+      access_token: accessToken,
+      level: 'adset',
+      fields: [
+        'account_id',
+        'account_name',
+        'campaign_id',
+        'campaign_name',
+        'adset_id',
+        'adset_name',
+        'spend',
+        'impressions',
+        'clicks',
+        'actions',
+        'action_values',
+        'date_start',
+        'date_stop'
+      ].join(','),
+      time_range: JSON.stringify({ since: startDate, until: endDate }),
+      limit: 500
+    };
+
+    try {
+      while (nextUrl) {
+        const response = await axios.get(nextUrl, {
+          params,
+          timeout: Math.min(this.configService.metaSyncTimeoutSeconds * 1000, 20000)
+        });
+
+        rows.push(...(response.data?.data || []));
+        nextUrl = response.data?.paging?.next || '';
+        params = undefined;
+      }
+    } catch (error) {
+      this.logger.error(`Meta account ${accountId} sync failed: ${this.axiosDetail(error)}`);
+    }
+
+    return rows;
+  }
+
+  private sumMetaActions(actions: any, actionTypes: string[]): number {
+    if (!Array.isArray(actions)) return 0;
+    const wanted = new Set(actionTypes.map((type) => this.normalizeHeader(type)));
+
+    return actions.reduce((sum, action) => {
+      const type = this.normalizeHeader(String(action.action_type || action.actionType || ''));
+      if (!wanted.has(type)) return sum;
+      return sum + this.numberValue(action.value);
+    }, 0);
+  }
+
+  private isManagedAdsAccount(accountName: string): boolean {
+    const compact = this.compactText(accountName);
+    return compact.includes('gestion')
+      || compact.includes('managed')
+      || compact.includes('rhd');
+  }
+
+  private chunkArray<T>(items: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+
+    for (let index = 0; index < items.length; index += size) {
+      chunks.push(items.slice(index, index + size));
+    }
+
+    return chunks;
+  }
+
+  async fetchGoogleAdsMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+    const customerIds = this.configService.googleAdsCustomerIds;
+
+    if (
+      !this.configService.googleAdsDeveloperToken
+      || !this.configService.googleAdsClientId
+      || !this.configService.googleAdsClientSecret
+      || !this.configService.googleAdsRefreshToken
+      || customerIds.length === 0
+    ) {
+      this.warnMissingConfig('google-ads-api', 'Google Ads API credentials or customer ids not configured.');
+      return [];
+    }
+
+    const accessToken = await this.fetchGoogleAdsAccessToken();
+    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const endDate = date;
+    const rows: any[] = [];
+
+    for (const customerId of customerIds) {
+      const customerRows = await this.searchGoogleAdsCustomer(customerId, this.googleAdsQuery(startDate, endDate), accessToken);
+      rows.push(...customerRows.map((row) => ({ ...row, __customerId: customerId })));
+    }
+
+    const aggregated = new Map<string, {
+      date: string;
+      customerId: string;
+      accountName: string;
+      campaignId: string;
+      campaignName: string;
+      spend: number;
+      impressions: number;
+      clicks: number;
+      conversions: number;
+      revenue: number;
+    }>();
+
+    for (const row of rows) {
+      const customer = row.customer || {};
+      const campaign = row.campaign || {};
+      const rawMetrics = row.metrics || {};
+      const segments = row.segments || {};
+      const customerId = String(row.__customerId || customer.id || '');
+      const accountName = String(customer.descriptiveName || customer.descriptive_name || '');
+
+      if (!this.compactText(accountName).includes('managed')) continue;
+
+      const spend = Number(rawMetrics.costMicros || rawMetrics.cost_micros || 0) / 1_000_000;
+      if (!spend) continue;
+
+      const campaignName = String(campaign.name || '');
+      const metricDate = scope === 'monthly' ? this.monthStart(date) : String(segments.date || date).slice(0, 10);
+      const googleCampaignId = String(campaign.id || campaign.resourceName || this.normalizeHeader(campaignName));
+      const key = [customerId, googleCampaignId, scope, metricDate].join('||');
+      const current = aggregated.get(key) || {
+        date: metricDate,
+        customerId,
+        accountName,
+        campaignId: googleCampaignId,
+        campaignName,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        conversions: 0,
+        revenue: 0
+      };
+
+      current.spend += spend;
+      current.impressions += this.numberValue(rawMetrics.impressions);
+      current.clicks += this.numberValue(rawMetrics.clicks);
+      current.conversions += this.numberValue(rawMetrics.conversions);
+      current.revenue += this.numberValue(rawMetrics.conversionsValue || rawMetrics.conversions_value);
+      aggregated.set(key, current);
+    }
+
+    const metrics: DailyMetrics[] = [];
+
+    for (const [index, item] of Array.from(aggregated.values()).entries()) {
+      const referencia = this.inferReference(item.accountName) || item.accountName;
+      const mapping = await this.brandMappingService.resolve(referencia);
+      const campaignId = [
+        'Google',
+        item.customerId,
+        item.campaignId,
+        scope,
+        item.date
+      ].join('-');
+
+      metrics.push({
+        date: item.date,
+        cliente: mapping.cliente,
+        marca: mapping.marca,
+        referencia,
+        accountId: item.customerId,
+        accountName: item.accountName,
+        plataforma: 'Google',
+        campaignId,
+        campaignName: item.campaignName || item.accountName,
+        objetivo: this.inferObjective(item.campaignName),
+        granularity: scope,
+        spend: this.round2(item.spend),
+        impressions: item.impressions,
+        clicks: item.clicks,
+        conversions: item.conversions,
+        revenue: item.revenue,
+      });
+    }
+
+    return metrics;
+  }
+
+  private async fetchGoogleAdsAccessToken(): Promise<string> {
+    try {
+      const response = await axios.post(
+        'https://oauth2.googleapis.com/token',
+        new URLSearchParams({
+          client_id: this.configService.googleAdsClientId,
+          client_secret: this.configService.googleAdsClientSecret,
+          refresh_token: this.configService.googleAdsRefreshToken,
+          grant_type: 'refresh_token'
+        }).toString(),
+        {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          timeout: this.configService.googleAdsSyncTimeoutSeconds * 1000
+        }
+      );
+
+      const token = response.data?.access_token;
+      if (!token) throw new ServiceUnavailableException('Google Ads OAuth did not return an access token');
+
+      return token;
+    } catch (error) {
+      const detail = this.axiosDetail(error);
+      this.logger.error(`Google Ads OAuth failed: ${detail}`);
+      throw new BadGatewayException(`Google Ads OAuth failed (${detail})`);
+    }
+  }
+
+  private async searchGoogleAdsCustomer(customerId: string, query: string, accessToken: string): Promise<any[]> {
+    try {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${accessToken}`,
+        'developer-token': this.configService.googleAdsDeveloperToken,
+        'Content-Type': 'application/json'
+      };
+
+      if (this.configService.googleAdsLoginCustomerId) {
+        headers['login-customer-id'] = this.configService.googleAdsLoginCustomerId;
+      }
+
+      const url = `${this.configService.googleAdsApiBaseUrl}/customers/${customerId}/googleAds:searchStream`;
+      const response = await axios.post(
+        url,
+        { query },
+        {
+          headers,
+          timeout: this.configService.googleAdsSyncTimeoutSeconds * 1000
+        }
+      );
+
+      const chunks = Array.isArray(response.data) ? response.data : [];
+      return chunks.flatMap((chunk) => Array.isArray(chunk.results) ? chunk.results : []);
+    } catch (error) {
+      const detail = this.axiosDetail(error);
+      this.logger.error(`Google Ads customer ${customerId} sync failed at ${this.configService.googleAdsApiBaseUrl}: ${detail}`);
+      return [];
+    }
+  }
+
+  private googleAdsQuery(startDate: string, endDate: string): string {
+    return `
+      SELECT
+        segments.date,
+        customer.id,
+        customer.descriptive_name,
+        campaign.id,
+        campaign.name,
+        metrics.cost_micros,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.conversions,
+        metrics.conversions_value
+      FROM campaign
+      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        AND campaign.status != 'REMOVED'
+        AND metrics.impressions > 0
+    `.replace(/\s+/g, ' ').trim();
   }
 
   async fetchTikTokMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
@@ -101,12 +523,25 @@ export class ExternalApisService {
 
     const startDate = scope === 'monthly' ? this.monthStart(date) : date;
     const endDate = date;
-    const aggregated = new Map<string, { advertiserId: string; accountName: string; spend: number }>();
+    const aggregated = new Map<string, {
+      advertiserId: string;
+      accountName: string;
+      campaignId: string;
+      campaignName: string;
+      objetivo?: string;
+      spend: number;
+    }>();
 
     try {
       const advertiserNames = await this.fetchTikTokAdvertiserNames(accessToken);
+      const campaignNames = new Map<string, string>();
 
       for (const advertiserId of advertiserIds) {
+        const advertiserCampaignNames = await this.fetchTikTokCampaignNames(accessToken, advertiserId);
+        for (const [campaignId, campaignName] of advertiserCampaignNames.entries()) {
+          campaignNames.set(`${advertiserId}:${campaignId}`, campaignName);
+        }
+
         let page = 1;
         let totalPages = 1;
 
@@ -118,8 +553,8 @@ export class ExternalApisService {
               params: {
                 advertiser_id: advertiserId,
                 report_type: 'BASIC',
-                data_level: 'AUCTION_ADVERTISER',
-                dimensions: JSON.stringify(['stat_time_day', 'advertiser_id']),
+                data_level: 'AUCTION_CAMPAIGN',
+                dimensions: JSON.stringify(['stat_time_day', 'campaign_id']),
                 metrics: JSON.stringify(['spend']),
                 start_date: startDate,
                 end_date: endDate,
@@ -145,8 +580,18 @@ export class ExternalApisService {
             const bucketDate = scope === 'monthly' ? this.monthStart(rawDate) : rawDate.slice(0, 10);
             const reportedAdvertiserId = String(dimensions.advertiser_id || advertiserId);
             const accountName = advertiserNames.get(reportedAdvertiserId) || advertiserNames.get(String(advertiserId)) || String(advertiserId);
-            const key = `${bucketDate}||${advertiserId}||${accountName}`;
-            const existing = aggregated.get(key) ?? { advertiserId, accountName, spend: 0 };
+            const campaignId = String(dimensions.campaign_id || dimensions.campaignId || `${advertiserId}-${page}`);
+            const campaignName = String(
+              dimensions.campaign_name
+              || dimensions.campaignName
+              || item.campaign_name
+              || campaignNames.get(`${advertiserId}:${campaignId}`)
+              || campaignNames.get(`${reportedAdvertiserId}:${campaignId}`)
+              || campaignId
+            );
+            const objetivo = this.inferObjective(campaignName);
+            const key = `${bucketDate}||${advertiserId}||${accountName}||${campaignId}||${campaignName}||${objetivo || ''}`;
+            const existing = aggregated.get(key) ?? { advertiserId, accountName, campaignId, campaignName, objetivo, spend: 0 };
             existing.spend += this.numberValue(metrics.spend ?? item.spend);
             aggregated.set(key, existing);
           }
@@ -171,8 +616,9 @@ export class ExternalApisService {
           accountId: value.advertiserId,
           accountName: value.accountName,
           plataforma: 'TikTok',
-          campaignId: `TikTok-${value.advertiserId}-${scope}-${metricDate}-${index}`,
-          campaignName: value.accountName,
+          campaignId: `TikTok-${value.advertiserId}-${value.campaignId}-${scope}-${metricDate}-${index}`,
+          campaignName: value.campaignName,
+          objetivo: value.objetivo,
           granularity: scope,
           spend: this.round2(value.spend),
           impressions: 0,
@@ -339,11 +785,34 @@ export class ExternalApisService {
       }, {});
 
       const accountName = this.firstValue(record, ['account', 'accountname', 'account_name']);
+      if (platform === 'Google' && !this.compactText(accountName).includes('managed')) continue;
       const referencia = this.firstValue(record, ['referencia', 'reference']) || this.inferReference(accountName) || accountName || 'Sin referencia';
       const mapping = await this.brandMappingService.resolve(referencia);
       const accountId = this.firstValue(record, ['accountid', 'account_id']);
-      const campaignName = this.firstValue(record, ['campaign', 'campaignname', 'campaign_name']) || accountName || referencia;
+      const adSetName = this.firstValue(record, [
+        'adset',
+        'adsetname',
+        'ad_set_name',
+        'adset_name',
+        'conjuntodeanuncios',
+        'conjunto_de_anuncios',
+        'conjuntodeads',
+        'conjunto_de_ads'
+      ]);
+      const adGroupName = this.firstValue(record, [
+        'adgroup',
+        'adgroupname',
+        'ad_group_name',
+        'adgroup_name',
+        'adgroupid',
+        'ad_group_id',
+        'grupodeanuncios',
+        'grupo_de_anuncios'
+      ]);
+      const campaignName = this.firstValue(record, ['campaign', 'campaignname', 'campaign_name']) || adSetName || adGroupName || accountName || referencia;
       const campaignId = this.firstValue(record, ['campaignid', 'campaign_id']) || `${platform}-${accountId || this.normalizeHeader(referencia) || index}`;
+      const objectiveSource = adSetName || adGroupName || campaignName;
+      const objetivo = this.inferObjective(objectiveSource);
 
       metrics.push({
         date: this.resolveMetricDate(record, dateRangeType, forcedDate, scope),
@@ -355,6 +824,9 @@ export class ExternalApisService {
         plataforma: platform,
         campaignId,
         campaignName,
+        adSetName,
+        adGroupName,
+        objetivo,
         granularity: scope,
         spend: this.numberValue(this.firstValue(record, ['cost', 'amountspent', 'amount_spent', 'spend'])),
         impressions: this.numberValue(this.firstValue(record, ['impressions'])),
@@ -409,33 +881,13 @@ export class ExternalApisService {
   }
 
   private shouldPreferAdsSheets(source: SupermetricsSource): boolean {
-    return Boolean(this.configService.adsSheetsSourceSpreadsheetId) && ['google', 'meta'].includes(source);
+    return false;
   }
 
   private getAdsSheetsRange(
     source: SupermetricsSource,
     scope: SupermetricsScope
   ): { sheetName: string; rangeA1: string; platform: string; startAtDataRow: boolean } | null {
-    if (source === 'google') {
-      return this.parseSheetRange(
-        scope === 'monthly' ? this.configService.googleAdsMonthlyRange : this.configService.googleAdsDailyRange,
-        'Google',
-        scope === 'monthly' ? 'A:F' : 'M:P'
-      );
-    }
-
-    if (source === 'meta') {
-      return {
-        ...this.parseSheetRange(
-          scope === 'monthly' ? this.configService.metaAdsMonthlyRange : this.configService.metaAdsDailyRange,
-          'Meta',
-          scope === 'monthly' ? 'A:C' : 'L:N'
-        ),
-        platform: 'META',
-        startAtDataRow: true
-      };
-    }
-
     return null;
   }
 
@@ -468,16 +920,29 @@ export class ExternalApisService {
     const endDate = date;
     const currentMonth = Number(date.slice(5, 7));
     const rowsWithoutHeaders = rows.filter((row) => row.some((value) => String(value || '').trim() !== ''));
+    const headerRow = rowsWithoutHeaders.find((row) => {
+      const normalized = row.map((value) => this.normalizeHeader(String(value || '')));
+      return normalized.includes('month') || normalized.includes('mes');
+    });
+    const columnMap = this.getAdsSheetColumnMap(headerRow, source);
     const normalizedRows = rowsWithoutHeaders.filter((row) => {
       const first = this.normalizeHeader(String(row[0] || ''));
       return first !== 'month' && first !== 'mes' && first !== 'bajadagoogleads' && first !== 'consumodeayer';
     });
 
     for (const [index, row] of normalizedRows.entries()) {
-      const month = this.numberValue(row[0]);
-      const accountName = String(row[1] || '').trim();
-      const spend = this.numberValue(row[2]);
-      const referencia = String(row[5] || '').trim() || String(row[3] || '').trim() || this.inferReference(accountName) || accountName;
+      const effectiveColumnMap = this.getEffectiveAdsSheetColumnMap(row, columnMap, source, Boolean(headerRow));
+      const month = this.numberValue(row[effectiveColumnMap.month]);
+      const accountName = String(row[effectiveColumnMap.accountName] || '').trim();
+      const campaignName = effectiveColumnMap.campaignName != null ? String(row[effectiveColumnMap.campaignName] || '').trim() : '';
+      const adSetName = effectiveColumnMap.adSetName != null ? String(row[effectiveColumnMap.adSetName] || '').trim() : '';
+      const adGroupName = effectiveColumnMap.adGroupName != null ? String(row[effectiveColumnMap.adGroupName] || '').trim() : '';
+      const spend = this.numberValue(row[effectiveColumnMap.spend]);
+      const referencia = effectiveColumnMap.referencia != null
+        ? String(row[effectiveColumnMap.referencia] || '').trim()
+        : '';
+      const resolvedReference = referencia || this.inferReference(accountName) || accountName;
+      const metricCampaignName = campaignName || adSetName || adGroupName || accountName;
 
       if (!accountName || spend === 0) continue;
       if (scope === 'monthly' && month && month !== currentMonth) continue;
@@ -488,27 +953,69 @@ export class ExternalApisService {
 
       if (metricDate < startDate || metricDate > endDate) continue;
 
-      const mapping = await this.brandMappingService.resolve(referencia);
+      const mapping = await this.brandMappingService.resolve(resolvedReference);
+      const objetivo = this.inferObjective(adSetName || adGroupName || metricCampaignName);
 
       metrics.push({
         date: metricDate,
         cliente: mapping.cliente,
         marca: mapping.marca,
-        referencia,
+        referencia: resolvedReference,
         accountName,
         plataforma: range.platform,
-        campaignId: `${range.platform}-${this.normalizeHeader(accountName)}-${scope}-${metricDate}-${index}`,
-        campaignName: accountName,
+        campaignId: `${range.platform}-${this.normalizeHeader(accountName)}-${this.normalizeHeader(metricCampaignName)}-${scope}-${metricDate}-${index}`,
+        campaignName: metricCampaignName,
+        adSetName,
+        adGroupName,
+        objetivo,
         granularity: scope,
         spend: this.round2(spend),
         impressions: 0,
         clicks: 0,
-        conversions: this.numberValue(row[3]),
-        revenue: this.numberValue(row[4])
+        conversions: effectiveColumnMap.conversions != null ? this.numberValue(row[effectiveColumnMap.conversions]) : 0,
+        revenue: effectiveColumnMap.revenue != null ? this.numberValue(row[effectiveColumnMap.revenue]) : 0
       });
     }
 
     return metrics;
+  }
+
+  private getAdsSheetColumnMap(headerRow: any[] | undefined, source: SupermetricsSource): AdsSheetColumnMap {
+    if (headerRow) {
+      const headers = headerRow.map((value) => this.normalizeHeader(String(value || '')));
+      const indexOf = (names: string[]) => {
+        const index = headers.findIndex((header) => names.includes(header));
+        return index >= 0 ? index : undefined;
+      };
+
+      return {
+        month: indexOf(['month', 'mes']) ?? 0,
+        accountName: indexOf(['account', 'accountname', 'account_name', 'cuenta']) ?? 1,
+        campaignName: indexOf(['campaign', 'campaignname', 'campaign_name', 'campana', 'campania']),
+        adSetName: indexOf(['adset', 'adsetname', 'ad_set_name', 'adset_name', 'conjuntodeanuncios', 'conjunto_de_anuncios', 'conjuntodeads', 'conjunto_de_ads']),
+        adGroupName: indexOf(['adgroup', 'adgroupname', 'ad_group_name', 'adgroup_name', 'grupodeanuncios', 'grupo_de_anuncios']),
+        spend: indexOf(['cost', 'spend', 'amountspent', 'amount_spent', 'consumo']) ?? 2,
+        conversions: indexOf(['conversions', 'conversionsmanyperclick', 'conversiones']),
+        revenue: indexOf(['totalconversionvalue', 'total_conversion_value', 'conversionvalue', 'valorconversion']),
+        referencia: indexOf(['referencia', 'reference', 'marca'])
+      };
+    }
+
+    return {
+      month: 0,
+      accountName: 1,
+      spend: 2,
+      referencia: 5
+    };
+  }
+
+  private getEffectiveAdsSheetColumnMap(
+    row: any[],
+    columnMap: AdsSheetColumnMap,
+    source: SupermetricsSource,
+    hasHeader: boolean
+  ): AdsSheetColumnMap {
+    return columnMap;
   }
 
   private extractSupermetricsTable(data: any): any[][] {
@@ -546,16 +1053,46 @@ export class ExternalApisService {
     return clean.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
 
+  private inferObjective(value: string): string | undefined {
+    const normalized = this.normalizeHeader(value);
+    if (!normalized) return undefined;
+    if (normalized.includes('alcance') || normalized.includes('reach')) return 'Alcance';
+    if (normalized.includes('leadsmensajes') || normalized.includes('mensajes')) return 'Leads-mensajes';
+    if (normalized.includes('lead')) return 'Leads';
+    if (normalized.includes('youtube')) return 'Youtube';
+    if (normalized.includes('local')) return 'Local campaing';
+    if (normalized.includes('visitasalperfil') || normalized.includes('perfil')) return 'Visitas al perfil';
+    if (normalized.includes('interaccion') || normalized.includes('engagement')) return 'Interaccion';
+    if (normalized.includes('trafico') || normalized.includes('traffic')) return 'Trafico';
+    if (normalized.includes('ventas') || normalized.includes('venta') || normalized.includes('sales') || normalized.includes('purchase') || normalized.includes('compra')) {
+      if (this.hasPmaxSignal(value)) return 'Ventas-PMAX';
+      if (this.hasSearchSignal(value)) return 'Ventas-Search';
+      return 'Ventas';
+    }
+
+    return undefined;
+  }
+
+  private compactText(value: string): string {
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  private hasPmaxSignal(value: string): boolean {
+    const compact = this.compactText(value);
+    return compact.includes('pmax')
+      || compact.includes('performancemax')
+      || compact.includes('maximorendimiento');
+  }
+
+  private hasSearchSignal(value: string): boolean {
+    const compact = this.compactText(value);
+    return compact.includes('search')
+      || compact.includes('sear')
+      || compact.includes('busqueda');
+  }
+
   private getSupermetricsSourceConfig(source: SupermetricsSource): SupermetricsSourceConfig {
     const configs: Record<SupermetricsSource, SupermetricsSourceConfig> = {
-      google: {
-        platform: 'Google',
-        queryJson: this.configService.supermetricsGoogleAdsQueryJson
-      },
-      meta: {
-        platform: 'META',
-        queryJson: this.configService.supermetricsFacebookAdsQueryJson
-      },
       linkedin: {
         platform: 'LinkedIn',
         queryJson: this.configService.supermetricsLinkedinAdsQueryJson
@@ -563,6 +1100,69 @@ export class ExternalApisService {
     };
 
     return configs[source];
+  }
+
+  private withGoogleAdsBreakdown(query: any): any {
+    const excludedAccountIds = this.configService.supermetricsGoogleAdsExcludedAccountIds;
+    const existingFilters = Array.isArray(query.filterArr) ? query.filterArr : [];
+    const filters = [
+      ...existingFilters,
+      { combineToPrev: ';', field: 'Accountname', operator: '=@', value: 'MANAGED' },
+      { combineToPrev: ';', field: 'Impressions', operator: '>', value: '0' }
+    ];
+    const cleanQuery = this.withoutSupermetricsAccounts(query, excludedAccountIds) || query;
+
+    return {
+      ...cleanQuery,
+      fields: [
+        { id: 'Month' },
+        { id: 'Accountname' },
+        { id: 'Campaignname' },
+        { id: 'Adgroupname' },
+        { id: 'Cost' },
+        { id: 'Conversionsmanyperclick' },
+        { id: 'Totalconversionvalue' }
+      ],
+      filterArr: filters,
+      max_rows: Number(query.max_rows || 10000)
+    };
+  }
+
+  private withoutSupermetricsAccount(query: any, accountId: string): any | null {
+    return this.withoutSupermetricsAccounts(query, [accountId]);
+  }
+
+  private withoutSupermetricsAccounts(query: any, accountIds: string[]): any | null {
+    const excluded = new Set(accountIds.map((accountId) => accountId.trim()).filter(Boolean));
+    if (excluded.size === 0) return null;
+
+    const removeUnavailable = (account: any) => {
+      const value = String(account || '');
+      const id = value.split('`')[0].trim();
+      return !excluded.has(id);
+    };
+
+    const nextQuery = { ...query };
+    let changed = false;
+
+    for (const key of ['ds_accounts', 'profiles']) {
+      if (!Array.isArray(query[key])) continue;
+      const filtered = query[key].filter(removeUnavailable);
+      if (filtered.length !== query[key].length) {
+        nextQuery[key] = filtered;
+        changed = true;
+      }
+    }
+
+    return changed ? nextQuery : null;
+  }
+
+  private extractUnavailableSupermetricsAccountId(data: any): string {
+    const message = this.extractResponseMessage(data);
+    const match = message.match(/Google Ads account\s+"?(\d+)"?\s+is not available/i)
+      || message.match(/account\s+"?(\d+)"?\s+is not available/i);
+
+    return match?.[1] || '';
   }
 
   private withDateRange(query: any, scope: SupermetricsScope, date: string): any {
@@ -668,6 +1268,46 @@ export class ExternalApisService {
       }
     } catch (error) {
       this.logger.warn(`Could not fetch TikTok advertiser names: ${this.axiosDetail(error)}`);
+    }
+
+    return names;
+  }
+
+  private async fetchTikTokCampaignNames(accessToken: string, advertiserId: string): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+    let page = 1;
+    let totalPages = 1;
+
+    try {
+      do {
+        const response = await axios.get(`${this.configService.tiktokApiBaseUrl}/campaign/get/`, {
+          headers: { 'Access-Token': accessToken },
+          params: {
+            advertiser_id: advertiserId,
+            page,
+            page_size: 1000
+          },
+          timeout: this.configService.tiktokSyncTimeoutSeconds * 1000
+        });
+
+        const data = response.data;
+        if (data?.code !== undefined && data.code !== 0) {
+          this.logger.warn(`Could not fetch TikTok campaign names for ${advertiserId}: ${data.message || `code ${data.code}`}`);
+          return names;
+        }
+
+        const list = data?.data?.list || [];
+        for (const item of list) {
+          const campaignId = String(item.campaign_id || item.campaignId || '');
+          const campaignName = String(item.campaign_name || item.campaignName || '');
+          if (campaignId && campaignName) names.set(campaignId, campaignName);
+        }
+
+        totalPages = Number(data?.data?.page_info?.total_page || 1) || 1;
+        page += 1;
+      } while (page <= totalPages);
+    } catch (error) {
+      this.logger.warn(`Could not fetch TikTok campaign names for ${advertiserId}: ${this.axiosDetail(error)}`);
     }
 
     return names;

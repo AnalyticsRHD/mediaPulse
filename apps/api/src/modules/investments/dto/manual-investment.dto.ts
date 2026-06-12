@@ -22,6 +22,10 @@ export class ManualInvestmentDto {
   @IsString()
   objetivo!: string;
 
+  @IsOptional()
+  @IsString()
+  campana?: string;
+
   @IsNumber()
   presupuesto!: number;
 

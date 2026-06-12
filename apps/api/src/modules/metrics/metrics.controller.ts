@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, Query, Logger } from '@nestjs/common';
 import { MetricsService } from './metrics.service';
 import { CreateDailyMetricsDto, UpdateDailyMetricsDto } from './dto/create-daily-metrics.dto';
 import {
@@ -11,6 +11,8 @@ import {
 
 @Controller('metrics')
 export class MetricsController {
+  private readonly logger = new Logger(MetricsController.name);
+
   constructor(
     private readonly metricsService: MetricsService,
     private readonly externalApisService: ExternalApisService
@@ -63,7 +65,7 @@ export class MetricsController {
 
   @Post('sync/supermetrics/facebook-ads')
   async syncSupermetricsFacebookAds(@Query('date') date?: string) {
-    return this.syncSupermetricsSource('meta', date ? 'daily' : 'monthly', date);
+    return this.syncNativeAdsSource('meta', date ? 'daily' : 'monthly', date);
   }
 
   @Post('sync/supermetrics')
@@ -72,7 +74,7 @@ export class MetricsController {
     @Query('scope') scope: SupermetricsScope = 'daily',
     @Query('date') date?: string
   ) {
-    const sources: SupermetricsSource[] = source === 'all' ? ['google', 'meta', 'linkedin'] : [source];
+    const sources: SupermetricsSource[] = source === 'all' ? ['linkedin'] : [source];
     const results = [];
 
     for (const currentSource of sources) {
@@ -94,7 +96,7 @@ export class MetricsController {
   ) {
     const targetDate = date || new Date().toISOString().slice(0, 10);
     const yesterday = this.previousDate(targetDate);
-    const sources: SupermetricsSource[] = source === 'all' ? ['google', 'meta', 'linkedin'] : [source];
+    const sources: SupermetricsSource[] = source === 'all' ? ['linkedin'] : [source];
     const results = [];
 
     for (const currentSource of sources) {
@@ -118,12 +120,12 @@ export class MetricsController {
     const targetDate = date || new Date().toISOString().slice(0, 10);
     const yesterday = this.previousDate(targetDate);
     const sources = source === 'all' ? this.getAllAdsSources() : [source];
-    const results = [];
-
-    for (const currentSource of sources) {
-      results.push(await this.safeSyncAdsSource(currentSource, 'monthly', targetDate));
-      results.push(await this.safeSyncAdsSource(currentSource, 'daily', yesterday));
-    }
+    const results = await Promise.all(
+      sources.flatMap((currentSource) => [
+        this.safeSyncAdsSource(currentSource, 'monthly', targetDate),
+        this.safeSyncAdsSource(currentSource, 'daily', yesterday)
+      ])
+    );
 
     return {
       date: targetDate,
@@ -195,13 +197,19 @@ export class MetricsController {
 
   private async safeSyncAdsSource(source: AdsMetricsSource, scope: SupermetricsScope, date?: string) {
     try {
-      if (this.isSupermetricsSource(source)) {
-        return await this.syncSupermetricsSource(source, scope, date);
-      }
+      this.logger.log(`Starting ${source} ${scope} sync for ${date || 'today'}`);
+      const result = await this.withTimeout(
+        this.isSupermetricsSource(source)
+          ? this.syncSupermetricsSource(source, scope, date)
+          : this.syncNativeAdsSource(source, scope, date),
+        60000
+      );
 
-      return await this.syncNativeAdsSource(source, scope, date);
+      this.logger.log(`Finished ${source} ${scope} sync: ${result.synced} rows`);
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`${source} ${scope} sync skipped: ${message}`);
 
       return {
         source,
@@ -215,12 +223,31 @@ export class MetricsController {
     }
   }
 
+  private async withTimeout<T extends { source: string; scope: SupermetricsScope; date: string; synced: number; metrics: any[] }>(
+    promise: Promise<T>,
+    timeoutMs: number
+  ): Promise<T> {
+    let timeout: NodeJS.Timeout | undefined;
+
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
   private getAllAdsSources(): AdsMetricsSource[] {
     return ['google', 'meta', 'linkedin', 'tiktok', 'mercadolibre'];
   }
 
   private isSupermetricsSource(source: AdsMetricsSource): source is SupermetricsSource {
-    return ['google', 'meta', 'linkedin'].includes(source);
+    return source === 'linkedin';
   }
 
   private previousDate(date: string): string {

@@ -6,6 +6,9 @@ export interface DailyMetrics {
   plataforma: string;
   campaignId: string;
   campaignName: string;
+  adSetName?: string;
+  adGroupName?: string;
+  objetivo?: string;
   referencia?: string;
   accountId?: string;
   accountName?: string;

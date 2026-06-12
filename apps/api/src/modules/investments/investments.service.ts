@@ -80,6 +80,7 @@ export class InvestmentsService {
       moneda: dto.moneda || InvestmentCurrency.ARS,
       status: dto.status || InvestmentStatus.EN_PROCESO,
       mes: this.currentMonth(),
+      campana: this.cleanOptionalText(dto.campana),
       lastConsumo: 0,
       lastConsumoDia: 0,
       lastConsumoUpdatedAt: null,
@@ -132,6 +133,7 @@ export class InvestmentsService {
       moneda: dto.moneda || existing.moneda || InvestmentCurrency.ARS,
       status: dto.status || existing.status || InvestmentStatus.EN_PROCESO,
       plataforma: dto.plataforma ? this.normalizePlatform(dto.plataforma) : existing.plataforma,
+      campana: dto.campana !== undefined ? this.cleanOptionalText(dto.campana) : existing.campana,
       presupuesto: dto.presupuesto != null ? Number(dto.presupuesto) : existing.presupuesto,
       costoPorResultado: dto.costoPorResultado != null ? Number(dto.costoPorResultado) : existing.costoPorResultado,
       tktPromedio: dto.tktPromedio != null ? Number(dto.tktPromedio) : existing.tktPromedio
@@ -182,7 +184,7 @@ export class InvestmentsService {
         fcProyectada: this.isSalesObjective(line.objetivo) ? resultadosProyectados * line.tktPromedio : 0,
         consumoRestante: line.presupuesto - consumo,
         porcentajeConsumo,
-        desvio: porcentajeConsumo - ritmo
+        desvio: ritmo - porcentajeConsumo
       },
       sourceLine: line,
       hasMonthlyMetrics,
@@ -196,24 +198,36 @@ export class InvestmentsService {
     hasMonthlyMetrics: boolean;
     hasDailyMetrics: boolean;
   } {
-    const monthlyMetrics = this.getMonthlyMetrics(line);
-    const dailyMetrics = this.getDailyMetrics(line, startDate, endDate);
-    const consumo = monthlyMetrics.length > 0
-      ? monthlyMetrics.reduce((sum, metric) => sum + metric.spend, 0)
+    const monthlyBaseMetrics = this.getMonthlyMetricBaseCandidates(line);
+    const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, startDate, endDate);
+    const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
+    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics);
+    const consumo = monthlyBaseMetrics.length > 0
+      ? this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1)
       : line.lastConsumo || 0;
-    const consumoDia = dailyMetrics.length > 0
-      ? dailyMetrics.reduce((sum, metric) => sum + metric.spend, 0)
+    const consumoDia = dailyBaseMetrics.length > 0
+      ? this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1)
       : line.lastConsumoDia || 0;
 
     return {
       consumo,
       consumoDia,
-      hasMonthlyMetrics: monthlyMetrics.length > 0,
-      hasDailyMetrics: dailyMetrics.length > 0
+      hasMonthlyMetrics: monthlyBaseMetrics.length > 0,
+      hasDailyMetrics: dailyBaseMetrics.length > 0
     };
   }
 
-  private getMonthlyMetrics(line: ManualInvestmentLine) {
+  private getMatchedMetricsWithFallback(
+    line: ManualInvestmentLine,
+    metrics: Array<{ objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string; spend: number }>
+  ) {
+    const matched = metrics.filter((metric) => this.metricMatchesLine(line, metric));
+    if (matched.length > 0) return matched;
+
+    return metrics.length === 1 ? metrics : matched;
+  }
+
+  private getMonthlyMetricBaseCandidates(line: ManualInvestmentLine) {
     const lineClient = this.normalizeReference(line.anunciante);
     const lineBrand = this.normalizeReference(line.marca || line.anunciante);
 
@@ -232,13 +246,14 @@ export class InvestmentsService {
   }
 
   private getDateRangeConsumption(line: ManualInvestmentLine, startDate: string, endDate: string): number {
-    const dailyMetrics = this.getDailyMetrics(line, startDate, endDate);
-    return dailyMetrics.length > 0
-      ? dailyMetrics.reduce((sum, metric) => sum + metric.spend, 0)
+    const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, startDate, endDate);
+    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics);
+    return dailyBaseMetrics.length > 0
+      ? this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1)
       : line.lastConsumoDia || 0;
   }
 
-  private getDailyMetrics(line: ManualInvestmentLine, startDate: string, endDate: string) {
+  private getDailyMetricBaseCandidates(line: ManualInvestmentLine, startDate: string, endDate: string) {
     const lineClient = this.normalizeReference(line.anunciante);
     const lineBrand = this.normalizeReference(line.marca || line.anunciante);
 
@@ -251,6 +266,183 @@ export class InvestmentsService {
         && metric.date >= startDate
         && metric.date <= endDate
       ));
+  }
+
+  private getWeightedMetricSpend(
+    metrics: Array<{ objetivo?: string; campaignName?: string; adSetName?: string; adGroupName?: string; spend: number }>,
+    line: ManualInvestmentLine,
+    trustSingleCandidate = false
+  ): number {
+    return metrics.reduce((sum, metric) => {
+      const weight = this.getMetricLineWeight(metric, line);
+      return sum + metric.spend * (trustSingleCandidate && weight === 0 ? 1 : weight);
+    }, 0);
+  }
+
+  private metricMatchesLine(line: ManualInvestmentLine, metric: { objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string }): boolean {
+    return this.metricMatchesCampana(line, metric) && this.getMetricLineWeight(metric, line) > 0;
+  }
+
+  private metricMatchesCampana(line: ManualInvestmentLine, metric: { campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string }): boolean {
+    const campana = this.cleanOptionalText(line.campana);
+    if (!campana) return true;
+
+    const needle = this.compactText(campana);
+    return this.getCampaignMatchFields(line, metric)
+      .some((value) => this.compactText(value || '').includes(needle));
+  }
+
+  private getCampaignMatchFields(line: ManualInvestmentLine, metric: { campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string }): Array<string | undefined> {
+    const platform = this.normalizePlatform(line.plataforma);
+
+    if (platform === 'Google') {
+      return [metric.campaignName, metric.campaignId];
+    }
+
+    if (platform === 'META') {
+      return [
+        metric.adSetName,
+        metric.campaignName,
+        metric.adGroupName,
+        metric.campaignId
+      ];
+    }
+
+    return [
+      metric.adSetName,
+      metric.adGroupName,
+      metric.campaignName,
+      metric.campaignId
+    ];
+  }
+
+  private getMetricLineWeight(metric: { objetivo?: string; campaignName?: string; adSetName?: string; adGroupName?: string }, line: ManualInvestmentLine): number {
+    const metricObjective = this.normalizeObjective(metric.objetivo || this.inferObjectiveFromText(this.getMetricDescriptor(metric)));
+    const lineObjective = this.normalizeObjective(line.objetivo);
+
+    if (metricObjective) {
+      if (metricObjective === lineObjective) return 1;
+      if (this.objectivesAreCompatible(lineObjective, metricObjective)) return 1;
+      const lineBaseObjective = this.baseObjective(lineObjective);
+      const metricBaseObjective = this.baseObjective(metricObjective);
+      if (lineBaseObjective !== metricBaseObjective) return 0;
+      return this.hasObjectiveSiblings(line) ? 0 : 1;
+    }
+
+    if (this.requiresExplicitObjective(line)) {
+      return this.shouldShareUnclassifiedMetric(line, metric) ? this.getUnclassifiedMetricShare(line) : 0;
+    }
+
+    return this.getUnclassifiedMetricShare(line);
+  }
+
+  private shouldShareUnclassifiedMetric(
+    line: ManualInvestmentLine,
+    metric: { campaignName?: string; adSetName?: string; adGroupName?: string }
+  ): boolean {
+    if (this.normalizePlatform(line.plataforma) !== 'TikTok') return false;
+    return !this.inferObjectiveFromText(this.getMetricDescriptor(metric));
+  }
+
+  private getObjectiveSiblingLines(line: ManualInvestmentLine): ManualInvestmentLine[] {
+    const lineClient = this.normalizeReference(line.anunciante);
+    const lineBrand = this.normalizeReference(line.marca || line.anunciante);
+
+    return Array.from(this.manualLines.values())
+      .filter((currentLine) => (
+        currentLine.mes === line.mes
+        && this.normalizeReference(currentLine.anunciante) === lineClient
+        && this.normalizeReference(currentLine.marca || currentLine.anunciante) === lineBrand
+        && this.normalizePlatform(currentLine.plataforma) === line.plataforma
+      ));
+  }
+
+  private hasObjectiveSiblings(line: ManualInvestmentLine): boolean {
+    const objectives = new Set(
+      this.getObjectiveSiblingLines(line)
+        .map((currentLine) => this.normalizeObjective(currentLine.objetivo))
+    );
+
+    return objectives.size > 1;
+  }
+
+  private getUnclassifiedMetricShare(line: ManualInvestmentLine): number {
+    const siblingLines = this.getObjectiveSiblingLines(line);
+    if (siblingLines.length <= 1) return 1;
+
+    const totalBudget = siblingLines.reduce((sum, currentLine) => sum + Math.max(currentLine.presupuesto, 0), 0);
+    if (totalBudget <= 0) return 1 / siblingLines.length;
+
+    return Math.max(line.presupuesto, 0) / totalBudget;
+  }
+
+  private requiresExplicitObjective(line: ManualInvestmentLine): boolean {
+    return this.hasObjectiveSiblings(line);
+  }
+
+  private getMetricDescriptor(metric: { campaignName?: string; adSetName?: string; adGroupName?: string }): string {
+    return [
+      metric.adSetName,
+      metric.adGroupName,
+      metric.campaignName
+    ].filter(Boolean).join(' ');
+  }
+
+  private inferObjectiveFromText(value: string): string {
+    const normalized = this.normalizeObjective(value);
+    if (!normalized) return '';
+    if (normalized.includes('alcance') || normalized.includes('reach')) return 'Alcance';
+    if (normalized.includes('lead')) return normalized.includes('mensaje') ? 'Leads-mensajes' : 'Leads';
+    if (normalized.includes('youtube')) return 'Youtube';
+    if (normalized.includes('local')) return 'Local campaing';
+    if (normalized.includes('perfil')) return 'Visitas al perfil';
+    if (normalized.includes('interaccion') || normalized.includes('engagement')) return 'Interaccion';
+    if (normalized.includes('trafico') || normalized.includes('traffic')) return 'Trafico';
+    if (normalized.includes('venta') || normalized.includes('sales')) {
+      if (this.hasPmaxSignal(value)) return 'Ventas-PMAX';
+      if (this.hasSearchSignal(value)) return 'Ventas-Search';
+      return 'Ventas';
+    }
+    return '';
+  }
+
+  private normalizeObjective(value: string): string {
+    return this.normalizeReference(value)
+      .replace(/\s+/g, '-')
+      .toLowerCase();
+  }
+
+  private baseObjective(value: string): string {
+    return value.replace(/-(pmax|search)$/i, '');
+  }
+
+  private objectivesAreCompatible(lineObjective: string, metricObjective: string): boolean {
+    const compatibleGroups = [
+      ['visitas-al-perfil', 'trafico'],
+      ['leads-mensajes', 'leads']
+    ];
+
+    return compatibleGroups.some((group) => (
+      group.includes(lineObjective) && group.includes(metricObjective)
+    ));
+  }
+
+  private compactText(value: string): string {
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  private hasPmaxSignal(value: string): boolean {
+    const compact = this.compactText(value);
+    return compact.includes('pmax')
+      || compact.includes('performancemax')
+      || compact.includes('maximorendimiento');
+  }
+
+  private hasSearchSignal(value: string): boolean {
+    const compact = this.compactText(value);
+    return compact.includes('search')
+      || compact.includes('sear')
+      || compact.includes('busqueda');
   }
 
   private normalizePlatform(platform: string): string {
@@ -314,7 +506,8 @@ export class InvestmentsService {
       (a.marca || '').localeCompare(b.marca || ''),
       a.moneda.localeCompare(b.moneda),
       a.plataforma.localeCompare(b.plataforma),
-      a.objetivo.localeCompare(b.objetivo)
+      a.objetivo.localeCompare(b.objetivo),
+      (a.campana || '').localeCompare(b.campana || '')
     ].find((result) => result !== 0) || 0;
   }
 
@@ -326,6 +519,14 @@ export class InvestmentsService {
     this.ensureFiniteNumber(dto.presupuesto, 'presupuesto');
     this.ensureFiniteNumber(dto.costoPorResultado, 'costoPorResultado');
     this.ensureFiniteNumber(dto.tktPromedio, 'tktPromedio');
+  }
+
+  private cleanOptionalText(value: string | undefined): string | undefined {
+    const clean = value?.trim();
+    if (!clean || this.compactText(clean).length === 0) return undefined;
+    if (this.compactText(clean) === '') return undefined;
+    if (['-', 'sin-campana', 'sincampana', 'na', 'n-a'].includes(this.normalizeReference(clean))) return undefined;
+    return clean;
   }
 
   private ensureFiniteNumber(value: unknown, field: string): void {

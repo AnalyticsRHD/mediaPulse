@@ -95,11 +95,11 @@ export class IngestionsSchedulerService {
   }
 
   private getSupermetricsSources(): SupermetricsSource[] {
-    return ['google', 'meta', 'linkedin'];
+    return ['linkedin'];
   }
 
   private getAdsSources(): AdsMetricsSource[] {
-    return [...this.getSupermetricsSources(), 'tiktok', 'mercadolibre'];
+    return ['google', 'meta', ...this.getSupermetricsSources(), 'tiktok', 'mercadolibre'];
   }
 
   private async safeFetchSupermetricsMetrics(source: SupermetricsSource, scope: 'monthly' | 'daily', date: string) {
@@ -129,7 +129,7 @@ export class IngestionsSchedulerService {
   }
 
   private isSupermetricsSource(source: AdsMetricsSource): source is SupermetricsSource {
-    return ['google', 'meta', 'linkedin'].includes(source);
+    return source === 'linkedin';
   }
 
   private previousDate(date: string): string {

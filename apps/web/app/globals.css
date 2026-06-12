@@ -802,6 +802,11 @@ tbody tr:nth-child(even) {
   color: var(--accent);
 }
 
+.custom-select-menu button.typeahead-match:not(.selected) {
+  background: #f4f7f5;
+  color: var(--accent);
+}
+
 .custom-select-empty {
   min-height: 34px;
   display: grid;
@@ -928,9 +933,10 @@ tbody tr:nth-child(even) {
 }
 
 .actions-cell {
-  min-width: 72px;
-  padding-right: 8px;
-  text-align: right;
+  min-width: 56px;
+  padding-left: 8px;
+  padding-right: 10px;
+  text-align: center;
 }
 
 .icon-button img {
@@ -984,22 +990,24 @@ tbody tr:nth-child(even) {
 }
 
 .preview-block {
-  overflow-x: visible;
+  overflow-x: auto;
 }
 
 .preview-block table {
   table-layout: fixed;
+  min-width: 1180px;
 }
 
 .preview-block th,
 .preview-block td {
-  padding-left: 5px;
-  padding-right: 5px;
+  padding-left: 6px;
+  padding-right: 6px;
+  vertical-align: middle;
 }
 
 .preview-block th:first-child,
 .preview-block td:first-child {
-  width: 120px;
+  width: 112px;
 }
 
 .preview-block th:nth-child(2),
@@ -1014,46 +1022,66 @@ tbody tr:nth-child(even) {
 
 .preview-block th:nth-child(4),
 .preview-block td:nth-child(4) {
-  width: 80px;
-  text-align: center;
+  width: 170px;
+  max-width: 170px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .preview-block th:nth-child(5),
-.preview-block td:nth-child(5),
+.preview-block td:nth-child(5) {
+  width: 64px;
+  text-align: center;
+}
+
 .preview-block th:nth-child(6),
 .preview-block td:nth-child(6) {
   padding-left: 3px;
   padding-right: 3px;
-  width: 112px;
+  width: 118px;
+  text-align: right;
 }
 
 .preview-block th:nth-child(7),
 .preview-block td:nth-child(7) {
-  width: 88px;
+  width: 90px;
+  text-align: right;
 }
 
 .preview-block th:nth-child(8),
 .preview-block td:nth-child(8) {
-  width: 48px;
-  text-align: center;
+  width: 86px;
+  text-align: right;
 }
 
 .preview-block th:nth-child(9),
 .preview-block td:nth-child(9) {
-  width: 124px;
+  width: 48px;
   text-align: center;
 }
 
 .preview-block th:nth-child(10),
 .preview-block td:nth-child(10) {
   width: 132px;
-  padding-left: 4px;
-  padding-right: 4px;
+  text-align: center;
 }
 
 .preview-block th:nth-child(11),
 .preview-block td:nth-child(11) {
-  width: 68px;
+  width: 119px;
+  padding-left: 3px;
+  padding-right: 8px;
+  text-align: right;
+}
+
+.preview-block th:nth-child(12),
+.preview-block td:nth-child(12) {
+  width: 61px;
+  padding-left: 8px;
+  padding-right: 10px;
+  text-align: center;
 }
 
 .preview-block .field {

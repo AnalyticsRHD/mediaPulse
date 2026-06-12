@@ -17,6 +17,7 @@ export interface ManualInvestmentLine {
   status: InvestmentStatus;
   plataforma: string;
   objetivo: string;
+  campana?: string;
   presupuesto: number;
   costoPorResultado: number;
   tktPromedio: number;
