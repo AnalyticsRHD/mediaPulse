@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
@@ -29,6 +29,12 @@ const baseObjectives = [
 ];
 const googleObjectiveSuffixes = ['PMAX', 'Search'];
 const platformOptions = ['META', 'Google', 'Merc. Libre', 'TikTok'];
+const allObjectiveOptions = uniqueValues([
+  ...baseObjectives,
+  ...['Trafico', 'Leads', 'Ventas'].flatMap((objective) => (
+    googleObjectiveSuffixes.map((suffix) => `${objective}-${suffix}`)
+  ))
+]);
 
 type InvestmentCurrency = typeof currencies[number];
 type InvestmentStatus = typeof investmentStatuses[number];
@@ -341,6 +347,14 @@ function uniqueValues(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
 
+function normalizeTypeaheadText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
 function getDeviationClass(value: number) {
   const percent = value * 100;
   if (percent >= 5 || percent <= -5) return 'deviation-cell danger';
@@ -364,10 +378,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const [customStartDate, setCustomStartDate] = useState(defaultDate);
   const [customEndDate, setCustomEndDate] = useState(currentDate);
   const [syncing, setSyncing] = useState(false);
+  const [brandClients, setBrandClients] = useState<string[]>([]);
   const [brandCatalog, setBrandCatalog] = useState<Record<string, string[]>>({});
   const [summaryCurrency, setSummaryCurrency] = useState<InvestmentCurrency>('ARS');
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [lineDraft, setLineDraft] = useState<ManualForm | null>(null);
+  const [editClientBrands, setEditClientBrands] = useState<string[]>([]);
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedDeleteIds, setSelectedDeleteIds] = useState<string[]>([]);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -385,7 +401,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     () => getDateRange(datePreset, customStartDate, customEndDate),
     [datePreset, customStartDate, customEndDate]
   );
-  const clients = useMemo(() => Object.keys(brandCatalog).sort(), [brandCatalog]);
+  const clients = useMemo(
+    () => (brandClients.length > 0 ? brandClients : Object.keys(brandCatalog).sort()),
+    [brandCatalog, brandClients]
+  );
   const selectedBrands = useMemo(() => brandCatalog[form.anunciante] ?? [], [brandCatalog, form.anunciante]);
   const controlFilterOptions = useMemo(() => getControlFilterOptions(data?.lines ?? []), [data]);
   const filteredControlLines = useMemo(() => {
@@ -418,12 +437,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     if (!lineDraft?.anunciante) return [];
 
     return uniqueValues([
+      ...editClientBrands,
       ...(brandCatalog[lineDraft.anunciante] ?? []),
       ...((manualData?.lines ?? [])
         .filter((line) => line.anunciante === lineDraft.anunciante)
         .map((line) => line.marca ?? ''))
     ]);
-  }, [brandCatalog, lineDraft?.anunciante, manualData]);
+  }, [brandCatalog, editClientBrands, lineDraft?.anunciante, manualData]);
 
   const groupedLines = useMemo(() => {
     const groups = new Map<string, InvestmentLine[]>();
@@ -566,8 +586,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     if (!authToken) return;
 
     async function loadBrandCatalog() {
-      const response = await fetch(`${API_BASE}/brand-mapping`, { cache: 'no-store' });
-      const mappings: Array<{ cliente: string; marca: string }> = await response.json();
+      const [clientOptions, mappings] = await Promise.all([
+        requestJson<string[]>(`${API_BASE}/brand-mapping/clients`, { cache: 'no-store' }),
+        requestJson<Array<{ cliente: string; marca: string }>>(`${API_BASE}/brand-mapping`, { cache: 'no-store' })
+      ]);
       const grouped = mappings.reduce<Record<string, string[]>>((acc, item) => {
         acc[item.cliente] = [...(acc[item.cliente] ?? []), item.marca];
         return acc;
@@ -577,9 +599,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
         grouped[cliente] = Array.from(new Set(grouped[cliente])).sort();
       });
 
+      setBrandClients(clientOptions);
       setBrandCatalog(grouped);
 
-      const firstClient = Object.keys(grouped).sort()[0] ?? '';
+      const firstClient = clientOptions[0] ?? Object.keys(grouped).sort()[0] ?? '';
       const firstBrand = firstClient ? grouped[firstClient][0] ?? '' : '';
       setForm((current) => current.anunciante ? current : {
         ...current,
@@ -588,8 +611,25 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       });
     }
 
-    loadBrandCatalog().catch(() => setBrandCatalog({}));
+    loadBrandCatalog().catch(() => {
+      setBrandClients([]);
+      setBrandCatalog({});
+    });
   }, [authToken]);
+
+  useEffect(() => {
+    if (!authToken || !lineDraft?.anunciante) {
+      setEditClientBrands([]);
+      return;
+    }
+
+    requestJson<string[]>(
+      `${API_BASE}/brand-mapping/clients/${encodeURIComponent(lineDraft.anunciante)}/brands`,
+      { cache: 'no-store' }
+    )
+      .then(setEditClientBrands)
+      .catch(() => setEditClientBrands([]));
+  }, [authToken, lineDraft?.anunciante]);
 
   useEffect(() => {
     function closeDropdowns(event: MouseEvent | TouchEvent) {
@@ -754,6 +794,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     if (!canManageManualLines) return;
     setDeleteMode(false);
     setSelectedDeleteIds([]);
+    setOpenSelectId(null);
+    setOpenControlFilter(null);
+    setEditClientBrands(uniqueValues([
+      ...(brandCatalog[line.anunciante] ?? []),
+      ...((manualData?.lines ?? [])
+        .filter((currentLine) => currentLine.anunciante === line.anunciante)
+        .map((currentLine) => currentLine.marca ?? ''))
+    ]));
     setEditingLineId(line.id);
     setLineDraft({
       anunciante: line.anunciante,
@@ -768,6 +816,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       status: line.status,
       mes: line.mes
     });
+
+    requestJson<string[]>(
+      `${API_BASE}/brand-mapping/clients/${encodeURIComponent(line.anunciante)}/brands`,
+      { cache: 'no-store' }
+    )
+      .then(setEditClientBrands)
+      .catch(() => undefined);
   }
 
   function toggleDeleteMode() {
@@ -908,7 +963,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     filterKey="anunciante"
                     label="Anunciante"
                     value={controlFilters.anunciante}
-                    options={controlFilterOptions.anunciante}
+                    options={clients}
                     openFilter={openControlFilter}
                     onToggle={setOpenControlFilter}
                     onChange={(value) => setControlFilters((current) => ({ ...current, anunciante: value }))}
@@ -1210,8 +1265,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                                 openSelectId={openSelectId}
                                 onOpenSelect={setOpenSelectId}
                                 onChange={(value) => {
-                                  const options = getObjectiveOptions(value);
-                                  setLineDraft({ ...lineDraft, plataforma: value, objetivo: options.includes(lineDraft.objetivo) ? lineDraft.objetivo : options[0] });
+                                  setLineDraft({
+                                    ...lineDraft,
+                                    plataforma: value,
+                                    objetivo: allObjectiveOptions.includes(lineDraft.objetivo)
+                                      ? lineDraft.objetivo
+                                      : allObjectiveOptions[0] ?? ''
+                                  });
                                 }}
                               />
                             ) : line.plataforma}
@@ -1220,7 +1280,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                             {editingLineId === line.id && lineDraft ? (
                               <CellSelect
                                 value={lineDraft.objetivo}
-                                options={getObjectiveOptions(lineDraft.plataforma)}
+                                options={allObjectiveOptions}
                                 id={`edit-objetivo-${line.id}`}
                                 openSelectId={openSelectId}
                                 onOpenSelect={setOpenSelectId}
@@ -1234,7 +1294,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                                 className="budget-input campaign-input"
                                 value={lineDraft.campana}
                                 onChange={(event) => setLineDraft({ ...lineDraft, campana: event.target.value })}
-                                placeholder="Texto conjunto"
+                                placeholder="Ej: CAMPAÑA_COMPLETA"
                               />
                             ) : line.campana || '-'}
                           </td>
@@ -1534,14 +1594,59 @@ function FilterHeader({
 }) {
   const isOpen = openFilter === filterKey;
   const allOptions = ['', ...options];
+  const [typeahead, setTypeahead] = useState('');
+  const typeaheadQuery = normalizeTypeaheadText(typeahead);
+  const visibleOptions = typeaheadQuery
+    ? allOptions.filter((option) => normalizeTypeaheadText(option || 'Todos').includes(typeaheadQuery))
+    : allOptions;
+  const typeaheadMatch = typeaheadQuery ? visibleOptions[0] ?? null : null;
+  const typeaheadMatchRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    setTypeahead('');
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!typeahead) return;
+    const timeout = window.setTimeout(() => setTypeahead(''), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [typeahead]);
+
+  useEffect(() => {
+    if (!isOpen || !typeaheadMatch) return;
+    typeaheadMatchRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [isOpen, typeaheadMatch]);
+
+  function handleTypeahead(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      onToggle(null);
+      return;
+    }
+
+    if (event.key === 'Backspace') {
+      event.preventDefault();
+      setTypeahead((current) => current.slice(0, -1));
+      return;
+    }
+
+    if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    if (!isOpen) onToggle(filterKey);
+    setTypeahead((current) => `${current}${event.key}`);
+  }
 
   return (
     <th>
-      <div className={`filter-header ${value ? 'active' : ''}`} data-dropdown-root="true">
+      <div
+        className={`filter-header ${value ? 'active' : ''}`}
+        data-dropdown-root="true"
+        onKeyDown={handleTypeahead}
+      >
         <span>{label}</span>
         <button
           className="filter-trigger"
           type="button"
+          onMouseDown={() => setTypeahead('')}
           onClick={() => onToggle(isOpen ? null : filterKey)}
           aria-label={`Filtrar ${label}`}
           aria-expanded={isOpen}
@@ -1550,19 +1655,26 @@ function FilterHeader({
         </button>
         {isOpen ? (
           <div className="filter-menu">
-            {allOptions.map((option) => (
+            {visibleOptions.length > 0 ? visibleOptions.map((option) => (
               <button
-                className={value === option ? 'selected' : ''}
+                className={[
+                  value === option ? 'selected' : '',
+                  typeaheadMatch === option ? 'typeahead-match' : ''
+                ].filter(Boolean).join(' ')}
                 key={option || 'all'}
+                ref={typeaheadMatch === option ? typeaheadMatchRef : undefined}
                 type="button"
                 onClick={() => {
+                  setTypeahead('');
                   onChange(option);
                   onToggle(null);
                 }}
               >
                 {option || 'Todos'}
               </button>
-            ))}
+            )) : (
+              <div className="custom-select-empty">Sin resultados</div>
+            )}
           </div>
         ) : null}
       </div>
@@ -1684,20 +1796,22 @@ function CustomSelect({
   const normalizedOptions = options.map((option) => (
     typeof option === 'string' ? { label: option, value: option } : option
   ));
-  const normalizedValue = value.trim().toLowerCase();
+  const normalizedValue = normalizeTypeaheadText(value);
   const selected = normalizedOptions.find((option) => option.value === value)
-    ?? normalizedOptions.find((option) => option.value.trim().toLowerCase() === normalizedValue)
-    ?? normalizedOptions.find((option) => option.label.trim().toLowerCase() === normalizedValue);
+    ?? normalizedOptions.find((option) => normalizeTypeaheadText(option.value) === normalizedValue)
+    ?? normalizedOptions.find((option) => normalizeTypeaheadText(option.label) === normalizedValue);
   const isOpen = openSelectId === id;
   const [typeahead, setTypeahead] = useState('');
-  const typeaheadQuery = typeahead.trim().toLowerCase();
-  const typeaheadMatch = typeaheadQuery
-    ? normalizedOptions.find((option) => {
-      const label = option.label.toLowerCase();
-      const optionValue = option.value.toLowerCase();
-      return label.startsWith(typeaheadQuery) || optionValue.startsWith(typeaheadQuery);
+  const typeaheadMatchRef = useRef<HTMLButtonElement | null>(null);
+  const typeaheadQuery = normalizeTypeaheadText(typeahead);
+  const visibleOptions = typeaheadQuery
+    ? normalizedOptions.filter((option) => {
+      const label = normalizeTypeaheadText(option.label);
+      const optionValue = normalizeTypeaheadText(option.value);
+      return label.includes(typeaheadQuery) || optionValue.includes(typeaheadQuery);
     })
-    : null;
+    : normalizedOptions;
+  const typeaheadMatch = typeaheadQuery ? visibleOptions[0] ?? null : null;
 
   useEffect(() => {
     setTypeahead('');
@@ -1709,6 +1823,11 @@ function CustomSelect({
     return () => window.clearTimeout(timeout);
   }, [typeahead]);
 
+  useEffect(() => {
+    if (!isOpen || !typeaheadMatch) return;
+    typeaheadMatchRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [isOpen, typeaheadMatch]);
+
   function handleTypeahead(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'Escape') {
       onOpenSelect(null);
@@ -1716,6 +1835,7 @@ function CustomSelect({
     }
 
     if (event.key === 'Backspace') {
+      event.preventDefault();
       setTypeahead((current) => current.slice(0, -1));
       return;
     }
@@ -1736,6 +1856,7 @@ function CustomSelect({
         className="custom-select-trigger"
         type="button"
         disabled={disabled}
+        onMouseDown={() => setTypeahead('')}
         onClick={() => {
           setTypeahead('');
           onOpenSelect(isOpen ? null : id);
@@ -1748,13 +1869,14 @@ function CustomSelect({
       </button>
       {isOpen ? (
         <div className="custom-select-menu">
-          {normalizedOptions.length > 0 ? normalizedOptions.map((option) => (
+          {visibleOptions.length > 0 ? visibleOptions.map((option) => (
             <button
               className={[
                 option.value === value ? 'selected' : '',
                 typeaheadMatch?.value === option.value ? 'typeahead-match' : ''
               ].filter(Boolean).join(' ')}
               key={`${id}-${option.value || 'empty'}`}
+              ref={typeaheadMatch?.value === option.value ? typeaheadMatchRef : undefined}
               type="button"
               onClick={() => {
                 setTypeahead('');
@@ -1821,11 +1943,8 @@ function SelectField({
 }
 
 function CellSelect({
-  id,
   value,
   options,
-  openSelectId,
-  onOpenSelect,
   onChange
 }: {
   id: string;
@@ -1836,14 +1955,16 @@ function CellSelect({
   onChange: (value: string) => void;
 }) {
   return (
-    <CustomSelect
-      id={id}
-      className="cell-select"
+    <select
+      className="cell-native-select"
       value={value}
-      options={options}
-      openSelectId={openSelectId}
-      onOpenSelect={onOpenSelect}
-      onChange={onChange}
-    />
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
   );
 }
