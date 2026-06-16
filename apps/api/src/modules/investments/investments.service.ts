@@ -184,7 +184,7 @@ export class InvestmentsService {
         fcProyectada: this.isSalesObjective(line.objetivo) ? resultadosProyectados * line.tktPromedio : 0,
         consumoRestante: line.presupuesto - consumo,
         porcentajeConsumo,
-        desvio: ritmo - porcentajeConsumo
+        desvio: porcentajeConsumo - ritmo
       },
       sourceLine: line,
       hasMonthlyMetrics,

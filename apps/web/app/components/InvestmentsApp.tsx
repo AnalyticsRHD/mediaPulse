@@ -356,10 +356,10 @@ function normalizeTypeaheadText(value: string) {
 }
 
 function getDeviationClass(value: number) {
-  const percent = value * 100;
+  const percent = Math.round(value * 100);
   if (percent >= 5 || percent <= -5) return 'deviation-cell danger';
   if ((percent >= 3 && percent <= 4) || (percent <= -3 && percent >= -4)) return 'deviation-cell warning';
-  if (percent >= -3 && percent <= 3) return 'deviation-cell good';
+  if (percent >= -2 && percent <= 2) return 'deviation-cell good';
   return 'deviation-cell';
 }
 
