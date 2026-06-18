@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import { ConfigService } from '../../config/config.service';
 
@@ -24,15 +24,20 @@ export class AirtableService {
       });
       this.logger.log('Airtable initialized successfully via HTTP API');
     } else {
-      this.logger.warn('Airtable credentials not found. Running in mock mode.');
+      this.logger.warn('Airtable credentials not found. Airtable operations disabled.');
     }
   }
 
-  async getRecords(tableName: string, options?: any): Promise<any[]> {
+  private getClient(): AxiosInstance {
     if (!this.client) {
-      this.logger.warn(`Mock: fetching records from ${tableName}`);
-      return [];
+      throw new ServiceUnavailableException('Airtable is not configured');
     }
+
+    return this.client;
+  }
+
+  async getRecords(tableName: string, options?: any): Promise<any[]> {
+    const client = this.getClient();
 
     try {
       const records: any[] = [];
@@ -43,7 +48,7 @@ export class AirtableService {
         const params = options || {};
         if (offset) params.offset = offset;
 
-        const response = await this.client.get(url, { params });
+        const response = await client.get(url, { params });
         records.push(
           ...response.data.records.map((r: any) => ({
             id: r.id,
@@ -61,13 +66,10 @@ export class AirtableService {
   }
 
   async getRecordById(tableName: string, recordId: string): Promise<any> {
-    if (!this.client) {
-      this.logger.warn(`Mock: fetching record ${recordId} from ${tableName}`);
-      return null;
-    }
+    const client = this.getClient();
 
     try {
-      const response = await this.client.get(`${tableName}/${recordId}`);
+      const response = await client.get(`${tableName}/${recordId}`);
       return { id: response.data.id, ...response.data.fields };
     } catch (error) {
       this.logger.error(`Error fetching record ${recordId}:`, error);
@@ -76,13 +78,10 @@ export class AirtableService {
   }
 
   async createRecord(tableName: string, fields: any): Promise<any> {
-    if (!this.client) {
-      this.logger.warn(`Mock: creating record in ${tableName}`);
-      return { id: 'mock-id', ...fields };
-    }
+    const client = this.getClient();
 
     try {
-      const response = await this.client.post(tableName, {
+      const response = await client.post(tableName, {
         fields,
         typecast: true
       });
@@ -94,13 +93,10 @@ export class AirtableService {
   }
 
   async updateRecord(tableName: string, recordId: string, fields: any): Promise<any> {
-    if (!this.client) {
-      this.logger.warn(`Mock: updating record ${recordId} in ${tableName}`);
-      return { id: recordId, ...fields };
-    }
+    const client = this.getClient();
 
     try {
-      const response = await this.client.patch(`${tableName}/${recordId}`, {
+      const response = await client.patch(`${tableName}/${recordId}`, {
         fields,
         typecast: true
       });
@@ -112,13 +108,10 @@ export class AirtableService {
   }
 
   async deleteRecord(tableName: string, recordId: string): Promise<boolean> {
-    if (!this.client) {
-      this.logger.warn(`Mock: deleting record ${recordId} from ${tableName}`);
-      return true;
-    }
+    const client = this.getClient();
 
     try {
-      await this.client.delete(`${tableName}/${recordId}`);
+      await client.delete(`${tableName}/${recordId}`);
       return true;
     } catch (error) {
       this.logger.error(`Error deleting record ${recordId}:`, error);
@@ -130,10 +123,7 @@ export class AirtableService {
     tableName: string,
     records: Array<{ fields: any; typecast?: boolean }>
   ): Promise<any[]> {
-    if (!this.client) {
-      this.logger.warn(`Mock: upserting ${records.length} records in ${tableName}`);
-      return records.map((r, idx) => ({ id: `mock-id-${idx}`, ...r.fields }));
-    }
+    const client = this.getClient();
 
     try {
       const result: any[] = [];
@@ -141,7 +131,7 @@ export class AirtableService {
       // Airtable API batch limit is 10
       for (let i = 0; i < records.length; i += 10) {
         const batch = records.slice(i, i + 10);
-        const response = await this.client.post(tableName, {
+        const response = await client.post(tableName, {
           records: batch.map(r => ({
             fields: r.fields,
             typecast: r.typecast !== false

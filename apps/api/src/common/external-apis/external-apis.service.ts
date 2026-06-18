@@ -719,8 +719,8 @@ export class ExternalApisService {
   async fetchMetaMetrics(accountId: string, dateFrom: string, dateTo: string): Promise<DailyMetrics[]> {
     const token = this.configService.metaAccessToken;
     if (!token) {
-      this.logger.warn('Meta access token not configured. Using mock data.');
-      return this.getMockMetaMetrics();
+      this.logger.warn('Meta access token not configured.');
+      return [];
     }
 
     try {
@@ -744,8 +744,8 @@ export class ExternalApisService {
   async fetchGoogleMetrics(customerId: string): Promise<DailyMetrics[]> {
     const token = this.configService.googleAccessToken;
     if (!token) {
-      this.logger.warn('Google access token not configured. Using mock data.');
-      return this.getMockGoogleMetrics();
+      this.logger.warn('Google access token not configured.');
+      return [];
     }
 
     try {
@@ -759,7 +759,6 @@ export class ExternalApisService {
   }
 
   private parseMetaResponse(data: any, platform: string): DailyMetrics[] {
-    // Mock parsing - en producción, mapear respuesta real de API
     this.logger.log(`Parsed ${platform} response`);
     return [];
   }
@@ -1460,57 +1459,6 @@ export class ExternalApisService {
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
 
     return '';
-  }
-
-  private getMockMetaMetrics(): DailyMetrics[] {
-    const today = new Date().toISOString().split('T')[0];
-    return [
-      {
-        date: today,
-        cliente: 'Fresh Up',
-        marca: 'Fresh Up',
-        plataforma: 'Meta',
-        campaignId: 'meta-campaign-001',
-        campaignName: 'Ventas Meta',
-        spend: 50000,
-        impressions: 500000,
-        clicks: 15000,
-        conversions: 300,
-        revenue: 150000
-      },
-      {
-        date: today,
-        cliente: 'Fresh Up',
-        marca: 'Fresh Up',
-        plataforma: 'Meta',
-        campaignId: 'meta-campaign-002',
-        campaignName: 'Alcance Meta',
-        spend: 30000,
-        impressions: 800000,
-        clicks: 10000,
-        conversions: 150,
-        revenue: 75000
-      }
-    ];
-  }
-
-  private getMockGoogleMetrics(): DailyMetrics[] {
-    const today = new Date().toISOString().split('T')[0];
-    return [
-      {
-        date: today,
-        cliente: 'Fresh Up',
-        marca: 'Fresh Up',
-        plataforma: 'Google',
-        campaignId: 'google-campaign-001',
-        campaignName: 'Search Google',
-        spend: 45000,
-        impressions: 300000,
-        clicks: 20000,
-        conversions: 400,
-        revenue: 200000
-      }
-    ];
   }
 
   async testConnectivity(): Promise<{ meta: boolean; google: boolean }> {

@@ -35,6 +35,17 @@ const allObjectiveOptions = uniqueValues([
     googleObjectiveSuffixes.map((suffix) => `${objective}-${suffix}`)
   ))
 ]);
+const GENERAL_VIEW = 'general';
+const viewAsClients: Record<string, string[]> = {
+  'florencia@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA', 'PAMPA BAY', 'IMQ'],
+  'francisco@redhookdata.com': ['WORLD SPORT', 'BINDER RULEMANES', 'LP', 'ORMIFLEX', 'RP'],
+  'franco@redhookdata.com': ['PAMPA BAY', 'IMQ', 'LP', 'ORMIFLEX', 'BINDER RULEMANES', 'RP'],
+  'sabrina@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA']
+};
+const viewAsOptions: SelectOption[] = [
+  { label: 'Ver como general', value: GENERAL_VIEW },
+  ...Object.keys(viewAsClients).map((email) => ({ label: `Ver como: ${email}`, value: email }))
+];
 
 type InvestmentCurrency = typeof currencies[number];
 type InvestmentStatus = typeof investmentStatuses[number];
@@ -263,6 +274,20 @@ function normalizePlatformName(platform: string) {
     .replace(/^-|-$/g, '');
 }
 
+function normalizeClientName(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function getViewAllowedClients(viewAs: string): Set<string> | null {
+  const clients = viewAsClients[viewAs];
+  if (!clients) return null;
+  return new Set(clients.map(normalizeClientName));
+}
+
+function lineMatchesView(line: InvestmentLine, allowedClients: Set<string> | null) {
+  return !allowedClients || allowedClients.has(normalizeClientName(line.anunciante));
+}
+
 function formatPlatformLabel(platform: string) {
   const normalized = normalizePlatformName(platform);
   if (normalized === 'merc-libre' || normalized === 'mercado-libre') return 'M.Libre';
@@ -380,6 +405,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const [syncing, setSyncing] = useState(false);
   const [brandClients, setBrandClients] = useState<string[]>([]);
   const [brandCatalog, setBrandCatalog] = useState<Record<string, string[]>>({});
+  const [viewAs, setViewAs] = useState(GENERAL_VIEW);
   const [summaryCurrency, setSummaryCurrency] = useState<InvestmentCurrency>('ARS');
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [lineDraft, setLineDraft] = useState<ManualForm | null>(null);
@@ -401,14 +427,38 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     () => getDateRange(datePreset, customStartDate, customEndDate),
     [datePreset, customStartDate, customEndDate]
   );
+  const viewAllowedClients = useMemo(() => getViewAllowedClients(viewAs), [viewAs]);
   const clients = useMemo(
-    () => (brandClients.length > 0 ? brandClients : Object.keys(brandCatalog).sort()),
-    [brandCatalog, brandClients]
+    () => (brandClients.length > 0 ? brandClients : Object.keys(brandCatalog).sort())
+      .filter((cliente) => !viewAllowedClients || viewAllowedClients.has(normalizeClientName(cliente))),
+    [brandCatalog, brandClients, viewAllowedClients]
   );
-  const selectedBrands = useMemo(() => brandCatalog[form.anunciante] ?? [], [brandCatalog, form.anunciante]);
-  const controlFilterOptions = useMemo(() => getControlFilterOptions(data?.lines ?? []), [data]);
+  const scopedBrandCatalog = useMemo(() => (
+    Object.entries(brandCatalog).reduce<Record<string, string[]>>((acc, [cliente, marcas]) => {
+      if (!viewAllowedClients || viewAllowedClients.has(normalizeClientName(cliente))) {
+        acc[cliente] = marcas;
+      }
+      return acc;
+    }, {})
+  ), [brandCatalog, viewAllowedClients]);
+  const scopedControlData = useMemo<InvestmentResponse | null>(() => {
+    if (!data) return null;
+    return {
+      ...data,
+      lines: data.lines.filter((line) => lineMatchesView(line, viewAllowedClients))
+    };
+  }, [data, viewAllowedClients]);
+  const scopedManualData = useMemo<InvestmentResponse | null>(() => {
+    if (!manualData) return null;
+    return {
+      ...manualData,
+      lines: manualData.lines.filter((line) => lineMatchesView(line, viewAllowedClients))
+    };
+  }, [manualData, viewAllowedClients]);
+  const selectedBrands = useMemo(() => scopedBrandCatalog[form.anunciante] ?? [], [scopedBrandCatalog, form.anunciante]);
+  const controlFilterOptions = useMemo(() => getControlFilterOptions(scopedControlData?.lines ?? []), [scopedControlData]);
   const filteredControlLines = useMemo(() => {
-    const lines = (data?.lines ?? []).filter((line) => (
+    const lines = (scopedControlData?.lines ?? []).filter((line) => (
       (!controlFilters.anunciante || line.anunciante === controlFilters.anunciante)
       && (!controlFilters.marca || (line.marca ?? '') === controlFilters.marca)
       && (!controlFilters.moneda || line.moneda === controlFilters.moneda)
@@ -422,32 +472,32 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       const result = Number(a[controlSort.key] ?? 0) - Number(b[controlSort.key] ?? 0);
       return controlSort.direction === 'asc' ? result : -result;
     });
-  }, [data, controlFilters, controlSort]);
+  }, [scopedControlData, controlFilters, controlSort]);
   const previewBrands = useMemo(() => {
-    const lines = manualData?.lines ?? [];
+    const lines = scopedManualData?.lines ?? [];
     return Array.from(new Set(
       lines
         .filter((line) => !previewClientFilter || line.anunciante === previewClientFilter)
         .map((line) => line.marca ?? '')
         .filter(Boolean)
     )).sort();
-  }, [manualData, previewClientFilter]);
+  }, [scopedManualData, previewClientFilter]);
   const objectiveOptions = useMemo(() => getObjectiveOptions(form.plataforma), [form.plataforma]);
   const editBrandOptions = useMemo(() => {
     if (!lineDraft?.anunciante) return [];
 
     return uniqueValues([
       ...editClientBrands,
-      ...(brandCatalog[lineDraft.anunciante] ?? []),
-      ...((manualData?.lines ?? [])
+      ...(scopedBrandCatalog[lineDraft.anunciante] ?? []),
+      ...((scopedManualData?.lines ?? [])
         .filter((line) => line.anunciante === lineDraft.anunciante)
         .map((line) => line.marca ?? ''))
     ]);
-  }, [brandCatalog, editClientBrands, lineDraft?.anunciante, manualData]);
+  }, [scopedBrandCatalog, editClientBrands, lineDraft?.anunciante, scopedManualData]);
 
   const groupedLines = useMemo(() => {
     const groups = new Map<string, InvestmentLine[]>();
-    manualData?.lines
+    scopedManualData?.lines
       .filter((line) => !previewClientFilter || line.anunciante === previewClientFilter)
       .filter((line) => !previewBrandFilter || line.marca === previewBrandFilter)
       .forEach((line) => {
@@ -455,7 +505,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       groups.set(key, [...(groups.get(key) ?? []), line]);
     });
     return Array.from(groups.entries()).map(([key, lines]) => ({ key, lines }));
-  }, [manualData, previewClientFilter, previewBrandFilter]);
+  }, [scopedManualData, previewClientFilter, previewBrandFilter]);
 
   async function requestJson<T>(url: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
     const headers = new Headers(options?.headers);
@@ -557,6 +607,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
         const user = await response.json() as AuthUser;
         setAuthToken(session.token);
         setAuthUser(user);
+        const email = user.email.toLowerCase();
+        setViewAs(viewAsClients[email] ? email : GENERAL_VIEW);
       } catch {
         localStorage.removeItem('mediapulse-auth');
         router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : '/control'}`);
@@ -581,6 +633,29 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    setControlFilters(emptyControlFilters);
+    setControlSort(null);
+    setPreviewClientFilter('');
+    setPreviewBrandFilter('');
+    setEditingLineId(null);
+    setLineDraft(null);
+    setOpenControlFilter(null);
+    setOpenSelectId(null);
+  }, [viewAs]);
+
+  useEffect(() => {
+    if (clients.length === 0) return;
+    if (form.anunciante && clients.includes(form.anunciante)) return;
+
+    const firstClient = clients[0];
+    setForm((current) => ({
+      ...current,
+      anunciante: firstClient,
+      marca: scopedBrandCatalog[firstClient]?.[0] ?? ''
+    }));
+  }, [clients, form.anunciante, scopedBrandCatalog]);
 
   useEffect(() => {
     if (!authToken) return;
@@ -797,8 +872,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     setOpenSelectId(null);
     setOpenControlFilter(null);
     setEditClientBrands(uniqueValues([
-      ...(brandCatalog[line.anunciante] ?? []),
-      ...((manualData?.lines ?? [])
+      ...(scopedBrandCatalog[line.anunciante] ?? []),
+      ...((scopedManualData?.lines ?? [])
         .filter((currentLine) => currentLine.anunciante === line.anunciante)
         .map((currentLine) => currentLine.marca ?? ''))
     ]));
@@ -906,9 +981,19 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
           <h1>Inversiones</h1>
         </div>
         <div className="date-actions">
-          <div className="user-pill">
-            <button type="button" onClick={handleLogout}>Salir</button>
-          </div>
+          <label className="month-control view-as-control">
+            Ver como
+            <CustomSelect
+              id="view-as"
+              className="view-as-select"
+              value={viewAs}
+              options={viewAsOptions}
+              openSelectId={openSelectId}
+              onOpenSelect={setOpenSelectId}
+              onChange={setViewAs}
+              ariaLabel="Ver como"
+            />
+          </label>
           <DateRangeControl
             preset={datePreset}
             range={selectedRange}
@@ -923,6 +1008,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
           <button className="sync-button" type="button" onClick={syncSupermetrics} disabled={syncing}>
             {syncing ? 'Sincronizando...' : 'Actualizar consumo'}
           </button>
+          <div className="user-pill">
+            <button type="button" onClick={handleLogout}>Salir</button>
+          </div>
         </div>
       </header>
 
@@ -940,7 +1028,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       {activeTab === 'control' ? (
         <section className="workspace">
           <SummaryStrip
-            data={data}
+            data={scopedControlData}
             loading={loading}
             currency={summaryCurrency}
             onCurrencyChange={setSummaryCurrency}

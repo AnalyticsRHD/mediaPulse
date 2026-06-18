@@ -295,6 +295,18 @@ h2 {
   gap: 10px;
 }
 
+.view-as-control {
+  min-width: 260px;
+}
+
+.view-as-select .custom-select-trigger {
+  min-height: 40px;
+}
+
+.view-as-select .custom-select-menu {
+  min-width: 260px;
+}
+
 .custom-range {
   display: flex;
   gap: 10px;

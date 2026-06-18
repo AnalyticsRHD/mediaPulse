@@ -83,23 +83,7 @@ export class ControlService {
     return this.controls.delete(id);
   }
 
-  getMonthlyStatus(): MonthlyControl {
-    return {
-      id: 'sample-monthly-control',
-      clientId: 'fresh-up',
-      month: '2026-05',
-      budgetOriginal: 3000000,
-      budgetAdjusted: 3000000,
-      consumoTotal: 1500000,
-      resultadosTotales: 48,
-      diasDelMes: 31,
-      diaActual: 18,
-      consumoEsperado: 1743935.5,
-      porcentajeConsumo: 0.5,
-      desvioPacing: -0.14,
-      semaforo: '🟢',
-      consumoRestante: 1500000,
-      observaciones: 'Estado de ejemplo para Fresh Up'
-    };
+  getMonthlyStatus(): MonthlyControl | null {
+    return this.findAll()[0] ?? null;
   }
 }
