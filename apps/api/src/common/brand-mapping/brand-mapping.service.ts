@@ -21,6 +21,7 @@ export class BrandMappingService {
     { cliente: 'LP', marca: 'LP' },
     { cliente: 'ORMIFLEX', marca: 'Ormiflex' },
     { cliente: 'PAMPA BAY', marca: 'Pampa Bay' },
+    { cliente: 'RP', marca: 'RP' },
     { cliente: 'BINDER RULEMANES', marca: 'Binder' },
     { cliente: 'ZONA FRANCA', marca: 'As Automotores' },
     { cliente: 'ZONA FRANCA', marca: 'Zona Franca' },
@@ -113,6 +114,10 @@ export class BrandMappingService {
   }
 
   private resolveAlias(normalizedReference: string): BrandMapping | null {
+    if (normalizedReference.includes('regalando pasion')) {
+      return { cliente: 'RP', marca: 'RP' };
+    }
+
     if (normalizedReference.includes('fundacion gls')) {
       return { cliente: 'LONDON', marca: 'London Fundación' };
     }

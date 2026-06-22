@@ -79,7 +79,7 @@ export class InvestmentsService {
       marca: mapping.marca,
       moneda: dto.moneda || InvestmentCurrency.ARS,
       status: dto.status || InvestmentStatus.EN_PROCESO,
-      mes: this.currentMonth(),
+      mes: this.ensureMonth(dto.mes || this.currentMonth(), 'mes'),
       campana: this.cleanOptionalText(dto.campana),
       lastConsumo: 0,
       lastConsumoDia: 0,
@@ -134,6 +134,7 @@ export class InvestmentsService {
       status: dto.status || existing.status || InvestmentStatus.EN_PROCESO,
       plataforma: dto.plataforma ? this.normalizePlatform(dto.plataforma) : existing.plataforma,
       campana: dto.campana !== undefined ? this.cleanOptionalText(dto.campana) : existing.campana,
+      mes: dto.mes ? this.ensureMonth(dto.mes, 'mes') : existing.mes,
       presupuesto: dto.presupuesto != null ? Number(dto.presupuesto) : existing.presupuesto,
       costoPorResultado: dto.costoPorResultado != null ? Number(dto.costoPorResultado) : existing.costoPorResultado,
       tktPromedio: dto.tktPromedio != null ? Number(dto.tktPromedio) : existing.tktPromedio

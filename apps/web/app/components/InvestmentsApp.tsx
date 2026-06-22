@@ -7,12 +7,11 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
 const currencies = ['ARS', 'CHL', 'USD'] as const;
 const investmentStatuses = ['EN_PROCESO', 'PRESUPUESTO_OK'] as const;
 const datePresetOptions = [
-  { value: 'today', label: 'Hoy' },
+  { value: 'thisMonth', label: 'Este mes' },
   { value: 'yesterday', label: 'Ayer' },
   { value: 'last7', label: 'Ultimos 7 dias' },
   { value: 'last14', label: 'Ultimos 14 dias' },
   { value: 'last30', label: 'Ultimos 30 dias' },
-  { value: 'thisMonth', label: 'Este mes' },
   { value: 'previousMonth', label: 'Mes anterior' },
   { value: 'custom', label: 'Personalizado' }
 ] as const;
@@ -172,8 +171,23 @@ function monthEnd(date: string) {
   return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 }
 
-const defaultDate = yesterdayDate();
 const currentDate = todayDate();
+
+function monthRange(month: string) {
+  const safeMonth = /^\d{4}-\d{2}$/.test(month) ? month : currentDate.slice(0, 7);
+  return { startDate: `${safeMonth}-01`, endDate: monthEnd(`${safeMonth}-01`) };
+}
+
+function isFinishedMonth(month: string) {
+  return monthEnd(`${month}-01`) < currentDate;
+}
+
+function formatMonthLabel(month: string) {
+  if (!/^\d{4}-\d{2}$/.test(month)) return month;
+  const [year, monthNumber] = month.split('-').map(Number);
+  const date = new Date(Date.UTC(year, monthNumber - 1, 1));
+  return new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(date);
+}
 
 const defaultForm: ManualForm = {
   anunciante: '',
@@ -210,8 +224,25 @@ const sortLabels: Record<SortKey, string> = {
   fcProyectada: 'FC proyectada'
 };
 
-function getDateRange(preset: DatePreset, customStart: string, customEnd: string) {
+function getDateRange(preset: DatePreset, customMonth: string) {
   const today = todayDate();
+
+  if (preset === 'yesterday') {
+    const yesterday = yesterdayDate();
+    return { startDate: yesterday, endDate: yesterday };
+  }
+
+  if (preset === 'last7') {
+    return { startDate: addDays(today, -6), endDate: today };
+  }
+
+  if (preset === 'last14') {
+    return { startDate: addDays(today, -13), endDate: today };
+  }
+
+  if (preset === 'last30') {
+    return { startDate: addDays(today, -29), endDate: today };
+  }
 
   if (preset === 'previousMonth') {
     const previousMonthDate = addDays(monthStart(today), -1);
@@ -219,12 +250,8 @@ function getDateRange(preset: DatePreset, customStart: string, customEnd: string
   }
 
   if (preset === 'custom') {
-    const startDate = customStart || today;
-    const endDate = customEnd || customStart || today;
-
-    return startDate <= endDate
-      ? { startDate, endDate }
-      : { startDate: endDate, endDate: startDate };
+    const selectedMonth = customMonth || today.slice(0, 7);
+    return monthRange(selectedMonth);
   }
 
   return { startDate: monthStart(today), endDate: today };
@@ -399,9 +426,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
-  const [datePreset, setDatePreset] = useState<DatePreset>('today');
-  const [customStartDate, setCustomStartDate] = useState(defaultDate);
-  const [customEndDate, setCustomEndDate] = useState(currentDate);
+  const [datePreset, setDatePreset] = useState<DatePreset>('thisMonth');
+  const [customMonth, setCustomMonth] = useState(currentDate.slice(0, 7));
+  const [previewMonth, setPreviewMonth] = useState(currentDate.slice(0, 7));
   const [syncing, setSyncing] = useState(false);
   const [brandClients, setBrandClients] = useState<string[]>([]);
   const [brandCatalog, setBrandCatalog] = useState<Record<string, string[]>>({});
@@ -424,8 +451,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const canManageManualLines = authUser?.role === 'ADMIN' || authUser?.role === 'MEDIA';
 
   const selectedRange = useMemo(
-    () => getDateRange(datePreset, customStartDate, customEndDate),
-    [datePreset, customStartDate, customEndDate]
+    () => getDateRange(datePreset, customMonth),
+    [datePreset, customMonth]
   );
   const viewAllowedClients = useMemo(() => getViewAllowedClients(viewAs), [viewAs]);
   const clients = useMemo(
@@ -506,6 +533,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     });
     return Array.from(groups.entries()).map(([key, lines]) => ({ key, lines }));
   }, [scopedManualData, previewClientFilter, previewBrandFilter]);
+  const formMonthFinished = isFinishedMonth(form.mes);
+  const manualPreviewMonthLabel = formatMonthLabel(previewMonth);
+  const manualPreviewMonthFinished = isFinishedMonth(previewMonth);
+  const canEditManualPreview = canManageManualLines && !manualPreviewMonthFinished;
 
   async function requestJson<T>(url: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
     const headers = new Headers(options?.headers);
@@ -572,10 +603,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     }
   }
 
-  async function loadManualPreview() {
+  async function loadManualPreview(month = previewMonth) {
     try {
-      const monthRange = { startDate: monthStart(currentDate), endDate: currentDate };
-      const payload = await requestJson<InvestmentResponse>(`${API_BASE}/investments?mes=${currentDate.slice(0, 7)}&startDate=${monthRange.startDate}&endDate=${monthRange.endDate}&includeDrafts=true`, { cache: 'no-store' });
+      const range = monthRange(month);
+      const payload = await requestJson<InvestmentResponse>(`${API_BASE}/investments?mes=${month}&startDate=${range.startDate}&endDate=${range.endDate}&includeDrafts=true`, { cache: 'no-store' });
       setManualData(payload);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo cargar la carga manual');
@@ -628,7 +659,16 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   useEffect(() => {
     if (!authToken) return;
     loadManualPreview().catch(() => undefined);
-  }, [authToken]);
+  }, [authToken, previewMonth]);
+
+  useEffect(() => {
+    setPreviewClientFilter('');
+    setPreviewBrandFilter('');
+    setEditingLineId(null);
+    setLineDraft(null);
+    setDeleteMode(false);
+    setSelectedDeleteIds([]);
+  }, [previewMonth]);
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -750,6 +790,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canManageManualLines) return;
+    if (formMonthFinished) {
+      setErrorMessage('No se puede cargar presupuesto en un mes finalizado');
+      return;
+    }
     setSaving(true);
 
     setErrorMessage('');
@@ -772,7 +816,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
         anunciante: current.anunciante,
         marca: current.marca
       }));
-      await loadInvestments(getDateRange(datePreset, customStartDate, customEndDate), datePreset);
+      await loadInvestments(getDateRange(datePreset, customMonth), datePreset);
       await loadManualPreview();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo guardar la linea');
@@ -783,6 +827,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   async function saveLine(line: InvestmentLine) {
     if (!lineDraft || !canManageManualLines) return;
+    if (manualPreviewMonthFinished) return;
 
     setErrorMessage('');
     try {
@@ -808,6 +853,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   async function updateLineStatus(line: InvestmentLine, status: InvestmentStatus) {
     if (!canManageManualLines) return;
+    if (manualPreviewMonthFinished) return;
     if (line.status === status) return;
 
     setErrorMessage('');
@@ -837,6 +883,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   async function updateGroupStatus(lines: InvestmentLine[], status: InvestmentStatus) {
     if (!canManageManualLines) return;
+    if (manualPreviewMonthFinished) return;
     const changedLines = lines.filter((line) => line.status !== status);
     if (changedLines.length === 0) return;
 
@@ -867,6 +914,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   function startLineEdit(line: InvestmentLine) {
     if (!canManageManualLines) return;
+    if (manualPreviewMonthFinished) return;
     setDeleteMode(false);
     setSelectedDeleteIds([]);
     setOpenSelectId(null);
@@ -902,6 +950,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   function toggleDeleteMode() {
     if (!canManageManualLines) return;
+    if (manualPreviewMonthFinished) return;
     setEditingLineId(null);
     setLineDraft(null);
     setDeleteMode((current) => {
@@ -912,6 +961,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   function toggleDeleteSelection(id: string) {
     if (!canManageManualLines) return;
+    if (manualPreviewMonthFinished) return;
     setSelectedDeleteIds((current) => (
       current.includes(id)
         ? current.filter((item) => item !== id)
@@ -921,6 +971,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   function toggleDeleteBrandSelection(lines: InvestmentLine[], marca: string) {
     if (!canManageManualLines) return;
+    if (manualPreviewMonthFinished) return;
     const brandIds = lines
       .filter((line) => (line.marca ?? line.anunciante) === marca)
       .map((line) => line.id);
@@ -941,6 +992,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   async function confirmDeleteLines() {
     if (!canManageManualLines) return;
+    if (manualPreviewMonthFinished) return;
     if (selectedDeleteIds.length === 0) return;
 
     setDeleting(true);
@@ -997,13 +1049,11 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
           <DateRangeControl
             preset={datePreset}
             range={selectedRange}
-            customStartDate={customStartDate}
-            customEndDate={customEndDate}
+            customMonth={customMonth}
             openSelectId={openSelectId}
             onOpenSelect={setOpenSelectId}
             onPresetChange={setDatePreset}
-            onCustomStartChange={setCustomStartDate}
-            onCustomEndChange={setCustomEndDate}
+            onCustomMonthChange={setCustomMonth}
           />
           <button className="sync-button" type="button" onClick={syncSupermetrics} disabled={syncing}>
             {syncing ? 'Sincronizando...' : 'Actualizar consumo'}
@@ -1140,6 +1190,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
             <form className="manual-form" onSubmit={handleSubmit}>
               <h2>Nuevo Presupuesto</h2>
               <div className="form-grid">
+                <MonthField
+                  label="Mes"
+                  value={form.mes}
+                  id="manual-mes"
+                  openSelectId={openSelectId}
+                  onOpenSelect={setOpenSelectId}
+                  onChange={(value) => setForm({ ...form, mes: value })}
+                />
                 <SelectField
                   label="Anunciante"
                   value={form.anunciante}
@@ -1183,7 +1241,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 <Field label="Costo x resultado" type="number" value={form.costoPorResultado} onChange={(value) => setForm({ ...form, costoPorResultado: value })} />
                 <Field label="TKT prom" type="number" value={form.tktPromedio} onChange={(value) => setForm({ ...form, tktPromedio: value })} />
               </div>
-              <button className="primary-button" type="submit" disabled={saving || !form.anunciante || !form.marca}>
+              <button className="primary-button" type="submit" disabled={saving || formMonthFinished || !form.anunciante || !form.marca}>
                 {saving ? 'Guardando...' : 'Agregar'}
               </button>
             </form>
@@ -1191,8 +1249,19 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
           <div className="manual-preview">
             <div className="preview-header">
-              <h2>Carga actual</h2>
+              <div className="preview-heading">
+                <h2>Carga actual</h2>
+                <span>{manualPreviewMonthLabel}</span>
+              </div>
               <div className="preview-filters">
+                <MonthField
+                  label="Mes"
+                  value={previewMonth}
+                  id="preview-mes"
+                  openSelectId={openSelectId}
+                  onOpenSelect={setOpenSelectId}
+                  onChange={setPreviewMonth}
+                />
                 <SelectField
                   label="Cliente"
                   value={previewClientFilter}
@@ -1221,7 +1290,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
             </div>
             {groupedLines.length === 0 ? (
               <div className="manual-empty">
-                No hay cargas manuales para este mes.
+                No hay cargas manuales para {manualPreviewMonthLabel}.
               </div>
             ) : null}
             {groupedLines.map((group) => {
@@ -1239,7 +1308,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       {groupCurrencies.map((currency) => (
                         <span className="currency-badge" key={currency}>{currency}</span>
                       ))}
-                      {canManageManualLines ? (
+                      {manualPreviewMonthFinished ? (
+                        <span className="status-finished">Finalizado</span>
+                      ) : canManageManualLines ? (
                         <StatusToggle
                           value={groupStatus}
                           onChange={(status) => updateGroupStatus(group.lines, status)}
@@ -1250,7 +1321,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         />
                       ) : null}
                     </div>
-                    {canManageManualLines ? (
+                    {canEditManualPreview ? (
                       <div className="preview-title-actions">
                         {deleteMode ? (
                           <button className="secondary-button" type="button" onClick={() => {
@@ -1278,7 +1349,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       </div>
                     ) : null}
                   </div>
-                  {deleteMode && canManageManualLines ? (
+                  {deleteMode && canEditManualPreview ? (
                     <div className="bulk-delete-bar">
                       {brandTotals.map((item) => {
                         const brandIds = group.lines
@@ -1314,7 +1385,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <th>Share</th>
                         <th>Resultado proyectado</th>
                         <th>FC proyectada</th>
-                        {canManageManualLines ? <th></th> : null}
+                        {canEditManualPreview ? <th></th> : null}
                       </tr>
                     </thead>
                     <tbody>
@@ -1332,7 +1403,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                               />
                             ) : (
                               <div className="brand-cell">
-                                {deleteMode && canManageManualLines ? (
+                                {deleteMode && canEditManualPreview ? (
                                   <input
                                     type="checkbox"
                                     checked={selectedDeleteIds.includes(line.id)}
@@ -1436,13 +1507,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           <td>{Math.round(line.share * 100)}%</td>
                           <td>{integer.format(line.resultadosProyectados)}</td>
                           <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
-                          <td className="actions-cell" hidden={!canManageManualLines}>
-                            {canManageManualLines && editingLineId === line.id ? (
+                          <td className="actions-cell" hidden={!canEditManualPreview}>
+                            {canEditManualPreview && editingLineId === line.id ? (
                               <div className="inline-actions">
                                 <button className="icon-button confirm" type="button" onClick={() => saveLine(line)} aria-label="Guardar linea">✓</button>
                                 <button className="icon-button" type="button" onClick={() => setEditingLineId(null)} aria-label="Cancelar edicion">X</button>
                               </div>
-                            ) : canManageManualLines ? (
+                            ) : canEditManualPreview ? (
                               <button className="icon-button" type="button" onClick={() => startLineEdit(line)} aria-label="Editar linea" disabled={deleteMode}>
                                 <img src="/assets/edit.svg" alt="" aria-hidden="true" />
                               </button>
@@ -1465,7 +1536,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           <td></td>
                           <td></td>
                           <td>{formatCurrencyTotals(item.totals, 'fcProyectada')}</td>
-                          <td hidden={!canManageManualLines}></td>
+                          <td hidden={!canEditManualPreview}></td>
                         </tr>
                       ))}
                       {clientTotals.map((item) => (
@@ -1481,7 +1552,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           <td></td>
                           <td></td>
                           <td>{formatCurrencyTotals(item.totals, 'fcProyectada')}</td>
-                          <td hidden={!canManageManualLines}></td>
+                          <td hidden={!canEditManualPreview}></td>
                         </tr>
                       ))}
                     </tfoot>
@@ -1613,23 +1684,19 @@ function MetricWithCurrencyFilter({
 function DateRangeControl({
   preset,
   range,
-  customStartDate,
-  customEndDate,
+  customMonth,
   openSelectId,
   onOpenSelect,
   onPresetChange,
-  onCustomStartChange,
-  onCustomEndChange
+  onCustomMonthChange
 }: {
   preset: DatePreset;
   range: { startDate: string; endDate: string };
-  customStartDate: string;
-  customEndDate: string;
+  customMonth: string;
   openSelectId: string | null;
   onOpenSelect: (id: string | null) => void;
   onPresetChange: (preset: DatePreset) => void;
-  onCustomStartChange: (date: string) => void;
-  onCustomEndChange: (date: string) => void;
+  onCustomMonthChange: (month: string) => void;
 }) {
   return (
     <div className="date-range-control">
@@ -1647,14 +1714,14 @@ function DateRangeControl({
       </label>
       {preset === 'custom' ? (
         <div className="custom-range">
-          <label className="month-control">
-            Desde
-            <input type="date" value={customStartDate} onChange={(event) => onCustomStartChange(event.target.value)} />
-          </label>
-          <label className="month-control">
-            Hasta
-            <input type="date" value={customEndDate} onChange={(event) => onCustomEndChange(event.target.value)} />
-          </label>
+          <MonthField
+            label="Mes"
+            value={customMonth}
+            id="range-month"
+            openSelectId={openSelectId}
+            onOpenSelect={onOpenSelect}
+            onChange={onCustomMonthChange}
+          />
         </div>
       ) : (
         <span className="range-pill">{range.startDate} / {range.endDate}</span>
@@ -1988,6 +2055,85 @@ function Field({ label, value, type = 'text', required = true, onChange }: { lab
     <label className="field">
       <span>{label}</span>
       <input type={type} value={value} onChange={(event) => onChange(event.target.value)} required={required} />
+    </label>
+  );
+}
+
+const monthPickerLabels = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+function MonthField({
+  id,
+  label,
+  value,
+  openSelectId,
+  onOpenSelect,
+  onChange
+}: {
+  id: string;
+  label: string;
+  value: string;
+  openSelectId: string | null;
+  onOpenSelect: (id: string | null) => void;
+  onChange: (value: string) => void;
+}) {
+  const selectedYear = Number(value.slice(0, 4)) || Number(currentDate.slice(0, 4));
+  const selectedMonth = Number(value.slice(5, 7)) || Number(currentDate.slice(5, 7));
+  const [displayYear, setDisplayYear] = useState(selectedYear);
+  const isOpen = openSelectId === id;
+
+  useEffect(() => {
+    if (isOpen) setDisplayYear(selectedYear);
+  }, [isOpen, selectedYear]);
+
+  return (
+    <label className="field month-picker-field">
+      <span>{label}</span>
+      <div className={`month-picker ${isOpen ? 'open' : ''}`} data-dropdown-root="true">
+        <button
+          className="month-picker-trigger"
+          type="button"
+          onClick={() => onOpenSelect(isOpen ? null : id)}
+          aria-expanded={isOpen}
+          aria-label={label}
+        >
+          <span>{formatMonthLabel(value)}</span>
+          <span className="month-picker-icon" aria-hidden="true">▾</span>
+        </button>
+        {isOpen ? (
+          <div className="month-picker-menu">
+            <div className="month-picker-year">
+              <button type="button" onClick={() => setDisplayYear((year) => year - 1)} aria-label="Año anterior">
+                &lt;
+              </button>
+              <strong>{displayYear}</strong>
+              <button type="button" onClick={() => setDisplayYear((year) => year + 1)} aria-label="Año siguiente">
+                &gt;
+              </button>
+            </div>
+            <div className="month-picker-grid">
+              {monthPickerLabels.map((monthLabel, index) => {
+                const month = String(index + 1).padStart(2, '0');
+                const optionValue = `${displayYear}-${month}`;
+                const selected = value === optionValue;
+
+                return (
+                  <button
+                    className={selected ? 'selected' : ''}
+                    type="button"
+                    key={month}
+                    onClick={() => {
+                      onChange(optionValue);
+                      onOpenSelect(null);
+                    }}
+                  >
+                    {monthLabel}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
     </label>
   );
 }
