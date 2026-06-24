@@ -36,13 +36,14 @@ export class InvestmentsService {
     }
     const days = this.daysInMonth(resolvedMes);
     const diasRestantes = this.getRemainingDays(resolvedMes, rangeEndDate);
-    const ritmo = days > 0 ? this.getElapsedDays(resolvedMes, rangeEndDate) / days : 0;
+    const remainingDayEquivalents = this.getRemainingDayEquivalents(resolvedMes, rangeEndDate);
+    const ritmo = days > 0 ? this.getElapsedDayEquivalents(resolvedMes, rangeEndDate) / days : 0;
     const lines = Array.from(this.manualLines.values())
       .filter((line) => line.mes === resolvedMes)
       .filter((line) => includeDrafts || line.status === InvestmentStatus.PRESUPUESTO_OK)
       .sort((a, b) => this.sortManualLines(a, b));
     const totalBudget = lines.reduce((sum, line) => sum + line.presupuesto, 0);
-    const builtLines = lines.map((line) => this.toInvestmentLine(line, totalBudget, days, diasRestantes, ritmo, rangeStartDate, rangeEndDate));
+    const builtLines = lines.map((line) => this.toInvestmentLine(line, totalBudget, days, remainingDayEquivalents, ritmo, rangeStartDate, rangeEndDate));
     await this.persistConsumptionSnapshots(builtLines);
     const investmentLines = builtLines.map((builtLine) => builtLine.line);
     const consumoTotal = investmentLines.reduce((sum, line) => sum + line.consumo, 0);
@@ -157,7 +158,7 @@ export class InvestmentsService {
     line: ManualInvestmentLine,
     totalBudget: number,
     days: number,
-    diasRestantes: number,
+    remainingDayEquivalents: number,
     ritmo: number,
     startDate: string,
     endDate: string
@@ -179,7 +180,7 @@ export class InvestmentsService {
         consumoDia,
         consumoAyer: consumoDia,
         presupuestoDaily: days > 0 ? line.presupuesto / days : 0,
-        nuevoPresupuestoDiario: diasRestantes > 0 ? (line.presupuesto - consumo) / diasRestantes : 0,
+        nuevoPresupuestoDiario: remainingDayEquivalents > 0 ? (line.presupuesto - consumo) / remainingDayEquivalents : 0,
         share,
         resultadosProyectados,
         fcProyectada: this.isSalesObjective(line.objetivo) ? resultadosProyectados * line.tktPromedio : 0,
@@ -499,6 +500,42 @@ export class InvestmentsService {
 
   private getRemainingDays(mes: string, date: string): number {
     return Math.max(this.daysInMonth(mes) - this.getElapsedDays(mes, date), 0);
+  }
+
+  private getElapsedDayEquivalents(mes: string, date: string): number {
+    return this.getElapsedMinutes(mes, date) / 1440;
+  }
+
+  private getRemainingDayEquivalents(mes: string, date: string): number {
+    const totalMinutes = this.daysInMonth(mes) * 1440;
+    return Math.max((totalMinutes - this.getElapsedMinutes(mes, date)) / 1440, 0);
+  }
+
+  private getElapsedMinutes(mes: string, date: string): number {
+    const days = this.daysInMonth(mes);
+    if (!date.startsWith(mes)) return 0;
+
+    const day = Math.min(Math.max(Number(date.slice(8, 10)), 0), days);
+    if (this.isTodayInMonth(mes, date)) {
+      const now = new Date();
+      return Math.min(
+        ((day - 1) * 1440) + (now.getHours() * 60) + now.getMinutes() + (now.getSeconds() / 60),
+        days * 1440
+      );
+    }
+
+    return day * 1440;
+  }
+
+  private isTodayInMonth(mes: string, date: string): boolean {
+    return date === this.formatLocalDate(new Date()) && date.startsWith(mes);
+  }
+
+  private formatLocalDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   private sortManualLines(a: ManualInvestmentLine, b: ManualInvestmentLine): number {

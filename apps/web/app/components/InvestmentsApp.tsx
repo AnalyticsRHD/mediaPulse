@@ -146,6 +146,15 @@ type ManualForm = {
   mes: string;
 };
 
+type ManualHistoryLine = Omit<ManualForm, 'presupuesto' | 'costoPorResultado' | 'tktPromedio'> & {
+  id: string;
+  presupuesto: number;
+  costoPorResultado: number;
+  tktPromedio: number;
+  createdAt?: string;
+  updatedAt?: string | null;
+};
+
 function yesterdayDate() {
   const date = new Date();
   date.setDate(date.getDate() - 1);
@@ -282,6 +291,17 @@ function formatMoney(value: number, moneda: InvestmentCurrency = 'CHL') {
   }).format(value);
 }
 
+function formatLastUpdate(value: string) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+
+  return new Intl.DateTimeFormat('es-AR', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  }).format(date);
+}
+
 function getObjectiveOptions(platform: string) {
   if (normalizePlatformName(platform) !== 'google') return baseObjectives;
 
@@ -336,6 +356,14 @@ type CurrencyTotal = {
   fcProyectada: number;
 };
 
+type ControlCurrencyTotal = {
+  moneda: InvestmentCurrency;
+  presupuesto: number;
+  consumo: number;
+  consumoRestante: number;
+  presupuestoDaily: number;
+};
+
 function sortCurrencyTotals(totals: CurrencyTotal[]) {
   return totals.sort((a, b) => a.moneda.localeCompare(b.moneda));
 }
@@ -385,6 +413,64 @@ function getClientTotals(lines: InvestmentLine[]) {
     .sort((a, b) => a.cliente.localeCompare(b.cliente));
 }
 
+function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal[] {
+  const totals = new Map<InvestmentCurrency, ControlCurrencyTotal>();
+
+  lines.forEach((line) => {
+    const current = totals.get(line.moneda) ?? {
+      moneda: line.moneda,
+      presupuesto: 0,
+      consumo: 0,
+      consumoRestante: 0,
+      presupuestoDaily: 0
+    };
+
+    totals.set(line.moneda, {
+      moneda: line.moneda,
+      presupuesto: current.presupuesto + line.presupuesto,
+      consumo: current.consumo + line.consumo,
+      consumoRestante: current.consumoRestante + line.consumoRestante,
+      presupuestoDaily: current.presupuestoDaily + line.presupuestoDaily
+    });
+  });
+
+  return Array.from(totals.values()).sort((a, b) => a.moneda.localeCompare(b.moneda));
+}
+
+function getManualFormSuggestions(lines: ManualHistoryLine[], form: ManualForm): ManualHistoryLine[] {
+  if (!form.anunciante || !form.marca || !form.plataforma) return [];
+
+  const client = normalizeClientName(form.anunciante);
+  const brand = normalizeTypeaheadText(form.marca);
+  const platform = normalizePlatformName(form.plataforma);
+  const matches = lines.filter((line) => (
+    normalizeClientName(line.anunciante) === client
+    && normalizeTypeaheadText(line.marca ?? '') === brand
+    && normalizePlatformName(line.plataforma) === platform
+  ));
+
+  const latestByCampaign = new Map<string, ManualHistoryLine>();
+  matches
+    .sort((a, b) => getManualLineRecency(b) - getManualLineRecency(a))
+    .forEach((line) => {
+      const key = normalizeTypeaheadText(line.campana || 'sin-campana');
+      if (!latestByCampaign.has(key)) latestByCampaign.set(key, line);
+    });
+
+  return Array.from(latestByCampaign.values());
+}
+
+function getCampaignSuggestionLabel(line: ManualHistoryLine) {
+  return line.campana?.trim() || 'Sin nombre campaña';
+}
+
+function getManualLineRecency(line: ManualHistoryLine) {
+  const date = line.updatedAt || line.createdAt || `${line.mes}-01T00:00:00.000Z`;
+  const timestamp = new Date(date).getTime();
+  if (Number.isFinite(timestamp)) return timestamp;
+  return new Date(`${line.mes}-01T00:00:00.000Z`).getTime();
+}
+
 function getControlFilterOptions(lines: InvestmentLine[]): Record<ControlFilterKey, string[]> {
   return {
     anunciante: uniqueValues(lines.map((line) => line.anunciante)),
@@ -423,6 +509,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const [activeTab, setActiveTab] = useState<'control' | 'manual'>(initialTab);
   const [data, setData] = useState<InvestmentResponse | null>(null);
   const [manualData, setManualData] = useState<InvestmentResponse | null>(null);
+  const [manualHistory, setManualHistory] = useState<ManualHistoryLine[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
@@ -430,6 +517,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const [customMonth, setCustomMonth] = useState(currentDate.slice(0, 7));
   const [previewMonth, setPreviewMonth] = useState(currentDate.slice(0, 7));
   const [syncing, setSyncing] = useState(false);
+  const [lastConsumptionSyncAt, setLastConsumptionSyncAt] = useState('');
+  const [previousValuesOpen, setPreviousValuesOpen] = useState(false);
   const [brandClients, setBrandClients] = useState<string[]>([]);
   const [brandCatalog, setBrandCatalog] = useState<Record<string, string[]>>({});
   const [viewAs, setViewAs] = useState(GENERAL_VIEW);
@@ -483,6 +572,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     };
   }, [manualData, viewAllowedClients]);
   const selectedBrands = useMemo(() => scopedBrandCatalog[form.anunciante] ?? [], [scopedBrandCatalog, form.anunciante]);
+  const manualFormSuggestions = useMemo(() => getManualFormSuggestions(manualHistory, form), [manualHistory, form]);
   const controlFilterOptions = useMemo(() => getControlFilterOptions(scopedControlData?.lines ?? []), [scopedControlData]);
   const filteredControlLines = useMemo(() => {
     const lines = (scopedControlData?.lines ?? []).filter((line) => (
@@ -500,6 +590,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       return controlSort.direction === 'asc' ? result : -result;
     });
   }, [scopedControlData, controlFilters, controlSort]);
+  const controlCurrencyTotals = useMemo(() => getControlCurrencyTotals(filteredControlLines), [filteredControlLines]);
   const previewBrands = useMemo(() => {
     const lines = scopedManualData?.lines ?? [];
     return Array.from(new Set(
@@ -509,6 +600,11 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
         .filter(Boolean)
     )).sort();
   }, [scopedManualData, previewClientFilter]);
+  const filteredManualPreviewLines = useMemo(() => (
+    (scopedManualData?.lines ?? [])
+      .filter((line) => !previewClientFilter || line.anunciante === previewClientFilter)
+      .filter((line) => !previewBrandFilter || line.marca === previewBrandFilter)
+  ), [scopedManualData, previewClientFilter, previewBrandFilter]);
   const objectiveOptions = useMemo(() => getObjectiveOptions(form.plataforma), [form.plataforma]);
   const editBrandOptions = useMemo(() => {
     if (!lineDraft?.anunciante) return [];
@@ -524,15 +620,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   const groupedLines = useMemo(() => {
     const groups = new Map<string, InvestmentLine[]>();
-    scopedManualData?.lines
-      .filter((line) => !previewClientFilter || line.anunciante === previewClientFilter)
-      .filter((line) => !previewBrandFilter || line.marca === previewBrandFilter)
-      .forEach((line) => {
+    filteredManualPreviewLines.forEach((line) => {
       const key = `${line.anunciante}-${line.marca ?? 'Sin marca'}`;
       groups.set(key, [...(groups.get(key) ?? []), line]);
     });
     return Array.from(groups.entries()).map(([key, lines]) => ({ key, lines }));
-  }, [scopedManualData, previewClientFilter, previewBrandFilter]);
+  }, [filteredManualPreviewLines]);
   const formMonthFinished = isFinishedMonth(form.mes);
   const manualPreviewMonthLabel = formatMonthLabel(previewMonth);
   const manualPreviewMonthFinished = isFinishedMonth(previewMonth);
@@ -614,6 +707,15 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     }
   }
 
+  async function loadManualHistory() {
+    try {
+      const payload = await requestJson<ManualHistoryLine[]>(`${API_BASE}/investments/manual`, { cache: 'no-store' });
+      setManualHistory(payload);
+    } catch {
+      setManualHistory([]);
+    }
+  }
+
   useEffect(() => {
     async function restoreSession() {
       try {
@@ -652,6 +754,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   }, [initialTab, router]);
 
   useEffect(() => {
+    setLastConsumptionSyncAt(localStorage.getItem('mediapulse-last-consumption-sync-at') || '');
+  }, []);
+
+  useEffect(() => {
     if (!authToken) return;
     loadInvestments().catch(() => setLoading(false));
   }, [authToken, datePreset, selectedRange.startDate, selectedRange.endDate]);
@@ -660,6 +766,11 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     if (!authToken) return;
     loadManualPreview().catch(() => undefined);
   }, [authToken, previewMonth]);
+
+  useEffect(() => {
+    if (!authToken) return;
+    loadManualHistory().catch(() => undefined);
+  }, [authToken]);
 
   useEffect(() => {
     setPreviewClientFilter('');
@@ -673,6 +784,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    setPreviousValuesOpen(false);
+  }, [form.anunciante, form.marca, form.plataforma]);
 
   useEffect(() => {
     setControlFilters(emptyControlFilters);
@@ -758,6 +873,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       if (event.key !== 'Escape') return;
       setOpenSelectId(null);
       setOpenControlFilter(null);
+      setPreviousValuesOpen(false);
     }
 
     document.addEventListener('mousedown', closeDropdowns);
@@ -779,6 +895,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
         method: 'POST',
         timeoutMs: 90000
       });
+      const syncedAt = new Date().toISOString();
+      localStorage.setItem('mediapulse-last-consumption-sync-at', syncedAt);
+      setLastConsumptionSyncAt(syncedAt);
       await loadInvestments();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo actualizar consumo');
@@ -818,6 +937,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       }));
       await loadInvestments(getDateRange(datePreset, customMonth), datePreset);
       await loadManualPreview();
+      await loadManualHistory();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo guardar la linea');
     } finally {
@@ -846,6 +966,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       setLineDraft(null);
       await loadInvestments();
       await loadManualPreview();
+      await loadManualHistory();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo editar la linea');
     }
@@ -876,6 +997,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       });
       await loadInvestments();
       await loadManualPreview();
+      await loadManualHistory();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo actualizar el status');
     }
@@ -907,9 +1029,22 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       })));
       await loadInvestments();
       await loadManualPreview();
+      await loadManualHistory();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo actualizar el status');
     }
+  }
+
+  function applyManualSuggestion(suggestion: ManualHistoryLine) {
+    setForm((current) => ({
+      ...current,
+      objetivo: suggestion.objetivo,
+      campana: suggestion.campana ?? '',
+      presupuesto: String(suggestion.presupuesto),
+      costoPorResultado: String(suggestion.costoPorResultado),
+      tktPromedio: String(suggestion.tktPromedio)
+    }));
+    setPreviousValuesOpen(false);
   }
 
   function startLineEdit(line: InvestmentLine) {
@@ -1008,6 +1143,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       setSelectedDeleteIds([]);
       await loadInvestments();
       await loadManualPreview();
+      await loadManualHistory();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudieron eliminar las lineas');
     } finally {
@@ -1032,35 +1168,38 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
           <p className="eyebrow">MediaPulse RHD</p>
           <h1>Inversiones</h1>
         </div>
-        <div className="date-actions">
-          <label className="month-control view-as-control">
-            Ver como
-            <CustomSelect
-              id="view-as"
-              className="view-as-select"
-              value={viewAs}
-              options={viewAsOptions}
+        <div className="date-actions-stack">
+          <div className="date-actions">
+            <label className="month-control view-as-control">
+              Ver como
+              <CustomSelect
+                id="view-as"
+                className="view-as-select"
+                value={viewAs}
+                options={viewAsOptions}
+                openSelectId={openSelectId}
+                onOpenSelect={setOpenSelectId}
+                onChange={setViewAs}
+                ariaLabel="Ver como"
+              />
+            </label>
+            <DateRangeControl
+              preset={datePreset}
+              range={selectedRange}
+              customMonth={customMonth}
               openSelectId={openSelectId}
               onOpenSelect={setOpenSelectId}
-              onChange={setViewAs}
-              ariaLabel="Ver como"
+              onPresetChange={setDatePreset}
+              onCustomMonthChange={setCustomMonth}
             />
-          </label>
-          <DateRangeControl
-            preset={datePreset}
-            range={selectedRange}
-            customMonth={customMonth}
-            openSelectId={openSelectId}
-            onOpenSelect={setOpenSelectId}
-            onPresetChange={setDatePreset}
-            onCustomMonthChange={setCustomMonth}
-          />
-          <button className="sync-button" type="button" onClick={syncSupermetrics} disabled={syncing}>
-            {syncing ? 'Sincronizando...' : 'Actualizar consumo'}
-          </button>
-          <div className="user-pill">
-            <button type="button" onClick={handleLogout}>Salir</button>
+            <button className="sync-button" type="button" onClick={syncSupermetrics} disabled={syncing}>
+              {syncing ? 'Sincronizando...' : 'Actualizar consumo'}
+            </button>
+            <div className="user-pill">
+              <button type="button" onClick={handleLogout}>Salir</button>
+            </div>
           </div>
+          <p className="last-sync">Ultima actualizacion: {formatLastUpdate(lastConsumptionSyncAt)}</p>
         </div>
       </header>
 
@@ -1181,6 +1320,21 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                   </tr>
                 ) : null}
               </tbody>
+              {controlCurrencyTotals.length > 0 ? (
+                <tfoot className="control-totals">
+                  {controlCurrencyTotals.map((total) => (
+                    <tr key={total.moneda}>
+                      <td colSpan={6}>Gran total {total.moneda}</td>
+                      <td>{formatMoney(total.presupuesto, total.moneda)}</td>
+                      <td>{formatMoney(total.consumo, total.moneda)}</td>
+                      <td>{total.presupuesto > 0 ? `${Math.round((total.consumo / total.presupuesto) * 100)}%` : '0%'}</td>
+                      <td className={total.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(total.consumoRestante, total.moneda)}</td>
+                      <td>{formatMoney(total.presupuestoDaily, total.moneda)}</td>
+                      <td colSpan={5}></td>
+                    </tr>
+                  ))}
+                </tfoot>
+              ) : null}
             </table>
           </div>
         </section>
@@ -1241,6 +1395,17 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 <Field label="Costo x resultado" type="number" value={form.costoPorResultado} onChange={(value) => setForm({ ...form, costoPorResultado: value })} />
                 <Field label="TKT prom" type="number" value={form.tktPromedio} onChange={(value) => setForm({ ...form, tktPromedio: value })} />
               </div>
+              {manualFormSuggestions.length > 0 ? (
+                <div className="form-suggestion">
+                  <div className="form-suggestion-heading">
+                    <span>Valores previos</span>
+                    <strong>{manualFormSuggestions.length} campaña{manualFormSuggestions.length === 1 ? '' : 's'}</strong>
+                  </div>
+                  <button className="suggestion-button" type="button" onClick={() => setPreviousValuesOpen(true)}>
+                    Ver valores previos
+                  </button>
+                </div>
+              ) : null}
               <button className="primary-button" type="submit" disabled={saving || formMonthFinished || !form.anunciante || !form.marca}>
                 {saving ? 'Guardando...' : 'Agregar'}
               </button>
@@ -1294,7 +1459,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
               </div>
             ) : null}
             {groupedLines.map((group) => {
-              const clientTotals = getClientTotals(group.lines);
+              const clientTotals = getClientTotals(
+                filteredManualPreviewLines.filter((line) => line.anunciante === group.lines[0].anunciante)
+              );
               const brandTotals = getBrandTotals(group.lines);
               const groupStatus = group.lines.every((line) => line.status === 'PRESUPUESTO_OK')
                 ? 'PRESUPUESTO_OK'
@@ -1580,6 +1747,57 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
               <button className="modal-button danger" type="button" onClick={confirmDeleteLines} disabled={deleting}>
                 {deleting ? 'Eliminando...' : 'Eliminar'}
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {previousValuesOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="previous-values-modal" role="dialog" aria-modal="true" aria-labelledby="previous-values-title">
+            <div className="previous-values-header">
+              <div>
+                <span>Valores previos</span>
+                <h2 id="previous-values-title">Elegir campaña</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setPreviousValuesOpen(false)} aria-label="Cerrar valores previos">
+                X
+              </button>
+            </div>
+            <p>
+              {form.anunciante} / {form.marca} / {form.plataforma}
+            </p>
+            <div className="campaign-suggestion-list modal-list">
+              {manualFormSuggestions.map((suggestion) => (
+                <button
+                  className="campaign-suggestion"
+                  type="button"
+                  key={suggestion.id}
+                  onClick={() => applyManualSuggestion(suggestion)}
+                >
+                  <div className="campaign-suggestion-top">
+                    <div>
+                      <strong>{getCampaignSuggestionLabel(suggestion)}</strong>
+                      <span>{formatMonthLabel(suggestion.mes)}</span>
+                    </div>
+                    <span>{suggestion.objetivo}</span>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Presupuesto</dt>
+                      <dd>{formatMoney(suggestion.presupuesto, suggestion.moneda)}</dd>
+                    </div>
+                    <div>
+                      <dt>Costo por resultado</dt>
+                      <dd>{formatMoney(suggestion.costoPorResultado, suggestion.moneda)}</dd>
+                    </div>
+                    <div>
+                      <dt>TKT prom</dt>
+                      <dd>{formatMoney(suggestion.tktPromedio, suggestion.moneda)}</dd>
+                    </div>
+                  </dl>
+                </button>
+              ))}
             </div>
           </div>
         </div>
