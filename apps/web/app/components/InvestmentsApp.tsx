@@ -89,6 +89,19 @@ type LoginResponse = {
   user: AuthUser;
 };
 
+type MetricsSyncStatus = {
+  key: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  status: 'running' | 'success' | 'failed' | null;
+  totalSynced: number | null;
+  error: string | null;
+};
+
+type MetricsSyncResponse = {
+  syncStatus?: MetricsSyncStatus;
+};
+
 type InvestmentLine = {
   id: string;
   anunciante: string;
@@ -697,6 +710,11 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     }
   }
 
+  async function loadConsumptionSyncStatus() {
+    const status = await requestJson<MetricsSyncStatus>(`${API_BASE}/metrics/sync/status?key=consumption`, { cache: 'no-store' });
+    setLastConsumptionSyncAt(status.finishedAt || status.startedAt || '');
+  }
+
   async function loadManualPreview(month = previewMonth) {
     try {
       const range = monthRange(month);
@@ -755,8 +773,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   }, [initialTab, router]);
 
   useEffect(() => {
-    setLastConsumptionSyncAt(localStorage.getItem('mediapulse-last-consumption-sync-at') || '');
-  }, []);
+    if (!authToken) return;
+    loadConsumptionSyncStatus().catch(() => undefined);
+  }, [authToken]);
 
   useEffect(() => {
     if (!authToken) return;
@@ -872,13 +891,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     setSyncing(true);
     try {
       setErrorMessage('');
-      await requestJson(`${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${selectedRange.endDate}`, {
+      const response = await requestJson<MetricsSyncResponse>(`${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${selectedRange.endDate}`, {
         method: 'POST',
         timeoutMs: 90000
       });
-      const syncedAt = new Date().toISOString();
-      localStorage.setItem('mediapulse-last-consumption-sync-at', syncedAt);
-      setLastConsumptionSyncAt(syncedAt);
+      const syncedAt = response.syncStatus?.finishedAt || response.syncStatus?.startedAt || '';
+      if (syncedAt) setLastConsumptionSyncAt(syncedAt);
       await loadInvestments();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo actualizar consumo');

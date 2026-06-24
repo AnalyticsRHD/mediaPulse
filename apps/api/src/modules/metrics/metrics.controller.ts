@@ -43,6 +43,11 @@ export class MetricsController {
     return this.metricsService.getSummary(cliente, date);
   }
 
+  @Get('sync/status')
+  getSyncStatus(@Query('key') key = 'consumption') {
+    return this.metricsService.getSyncStatus(key);
+  }
+
   @Get(':id')
   getById(@Param('id') id: string) {
     return this.metricsService.findById(id);
@@ -94,22 +99,34 @@ export class MetricsController {
     @Query('source') source: SupermetricsSource | 'all' = 'all',
     @Query('date') date?: string
   ) {
+    await this.metricsService.markSyncStarted('consumption');
     const targetDate = date || new Date().toISOString().slice(0, 10);
     const yesterday = this.previousDate(targetDate);
     const sources: SupermetricsSource[] = source === 'all' ? ['linkedin'] : [source];
     const results = [];
 
-    for (const currentSource of sources) {
-      results.push(await this.safeSyncSupermetricsSource(currentSource, 'monthly', targetDate));
-      results.push(await this.safeSyncSupermetricsSource(currentSource, 'daily', yesterday));
-    }
+    try {
+      for (const currentSource of sources) {
+        results.push(await this.safeSyncSupermetricsSource(currentSource, 'monthly', targetDate));
+        results.push(await this.safeSyncSupermetricsSource(currentSource, 'daily', yesterday));
+      }
 
-    return {
-      date: targetDate,
-      dailyDate: yesterday,
-      totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
-      results
-    };
+      const response = {
+        date: targetDate,
+        dailyDate: yesterday,
+        totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
+        results
+      };
+      const syncStatus = await this.metricsService.markSyncFinished('consumption', response);
+
+      return {
+        ...response,
+        syncStatus
+      };
+    } catch (error) {
+      await this.metricsService.markSyncFinished('consumption', { totalSynced: 0 }, error);
+      throw error;
+    }
   }
 
   @Post('sync/monthly-and-daily')
@@ -117,22 +134,34 @@ export class MetricsController {
     @Query('source') source: AdsMetricsSource | 'all' = 'all',
     @Query('date') date?: string
   ) {
+    await this.metricsService.markSyncStarted('consumption');
     const targetDate = date || new Date().toISOString().slice(0, 10);
     const yesterday = this.previousDate(targetDate);
     const sources = source === 'all' ? this.getAllAdsSources() : [source];
-    const results = await Promise.all(
-      sources.flatMap((currentSource) => [
-        this.safeSyncAdsSource(currentSource, 'monthly', targetDate),
-        this.safeSyncAdsSource(currentSource, 'daily', yesterday)
-      ])
-    );
 
-    return {
-      date: targetDate,
-      dailyDate: yesterday,
-      totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
-      results
-    };
+    try {
+      const results = await Promise.all(
+        sources.flatMap((currentSource) => [
+          this.safeSyncAdsSource(currentSource, 'monthly', targetDate),
+          this.safeSyncAdsSource(currentSource, 'daily', yesterday)
+        ])
+      );
+      const response = {
+        date: targetDate,
+        dailyDate: yesterday,
+        totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
+        results
+      };
+      const syncStatus = await this.metricsService.markSyncFinished('consumption', response);
+
+      return {
+        ...response,
+        syncStatus
+      };
+    } catch (error) {
+      await this.metricsService.markSyncFinished('consumption', { totalSynced: 0 }, error);
+      throw error;
+    }
   }
 
   private async syncSupermetricsSource(source: SupermetricsSource, scope: SupermetricsScope, date?: string) {

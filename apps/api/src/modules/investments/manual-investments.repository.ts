@@ -196,6 +196,36 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
     return true;
   }
 
+  async findLatestConsumptionSyncAt(): Promise<string | null> {
+    if (!(await this.init()) || !this.pool) return null;
+
+    const result = await this.pool.query(
+      `
+        SELECT MAX(last_consumo_updated_at) AS last_consumo_updated_at
+        FROM manual_investment_lines
+        WHERE deleted_at IS NULL;
+      `
+    );
+    const value = result.rows[0]?.last_consumo_updated_at;
+
+    return value ? new Date(String(value)).toISOString() : null;
+  }
+
+  async markConsumptionSyncAt(syncedAt: string): Promise<boolean> {
+    if (!(await this.init()) || !this.pool) return false;
+
+    await this.pool.query(
+      `
+        UPDATE manual_investment_lines
+        SET last_consumo_updated_at = $1
+        WHERE deleted_at IS NULL;
+      `,
+      [syncedAt]
+    );
+
+    return true;
+  }
+
   async deleteMany(ids: string[]): Promise<{ deletedCount: number; deletedIds: string[] } | null> {
     if (!(await this.init()) || !this.pool) return null;
 
