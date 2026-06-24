@@ -751,6 +751,13 @@ tbody tr:nth-child(even) {
   width: 100%;
 }
 
+.manual-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .manual-form,
 .manual-preview {
   border: 1px solid var(--line);
@@ -827,7 +834,7 @@ tbody tr:nth-child(even) {
 
 .campaign-suggestion {
   display: grid;
-  gap: 10px;
+  gap: 3px;
   border: 1px solid #d5eadc;
   border-radius: 7px;
   background: #fff;
@@ -838,14 +845,10 @@ tbody tr:nth-child(even) {
 }
 
 .campaign-suggestion-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
+  display: block;
 }
 
 .campaign-suggestion-top div {
-  min-width: 0;
   display: grid;
   gap: 3px;
 }
@@ -857,7 +860,14 @@ tbody tr:nth-child(even) {
   white-space: nowrap;
 }
 
-.campaign-suggestion-top span,
+.campaign-suggestion-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.campaign-suggestion-meta span,
 .campaign-suggestion dt,
 .campaign-suggestion dd {
   color: var(--muted);

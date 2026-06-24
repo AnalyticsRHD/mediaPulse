@@ -135,7 +135,7 @@ type InvestmentResponse = {
 type ManualForm = {
   anunciante: string;
   marca: string;
-  moneda: InvestmentCurrency;
+  moneda: InvestmentCurrency | '';
   status: InvestmentStatus;
   plataforma: string;
   objetivo: string;
@@ -146,8 +146,9 @@ type ManualForm = {
   mes: string;
 };
 
-type ManualHistoryLine = Omit<ManualForm, 'presupuesto' | 'costoPorResultado' | 'tktPromedio'> & {
+type ManualHistoryLine = Omit<ManualForm, 'moneda' | 'presupuesto' | 'costoPorResultado' | 'tktPromedio'> & {
   id: string;
+  moneda: InvestmentCurrency;
   presupuesto: number;
   costoPorResultado: number;
   tktPromedio: number;
@@ -201,10 +202,10 @@ function formatMonthLabel(month: string) {
 const defaultForm: ManualForm = {
   anunciante: '',
   marca: '',
-  moneda: 'ARS',
+  moneda: '',
   status: 'EN_PROCESO',
-  plataforma: 'META',
-  objetivo: 'Ventas',
+  plataforma: '',
+  objetivo: '',
   campana: '',
   presupuesto: '',
   costoPorResultado: '',
@@ -801,18 +802,6 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   }, [viewAs]);
 
   useEffect(() => {
-    if (clients.length === 0) return;
-    if (form.anunciante && clients.includes(form.anunciante)) return;
-
-    const firstClient = clients[0];
-    setForm((current) => ({
-      ...current,
-      anunciante: firstClient,
-      marca: scopedBrandCatalog[firstClient]?.[0] ?? ''
-    }));
-  }, [clients, form.anunciante, scopedBrandCatalog]);
-
-  useEffect(() => {
     if (!authToken) return;
 
     async function loadBrandCatalog() {
@@ -831,14 +820,6 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
       setBrandClients(clientOptions);
       setBrandCatalog(grouped);
-
-      const firstClient = clientOptions[0] ?? Object.keys(grouped).sort()[0] ?? '';
-      const firstBrand = firstClient ? grouped[firstClient][0] ?? '' : '';
-      setForm((current) => current.anunciante ? current : {
-        ...current,
-        anunciante: firstClient,
-        marca: firstBrand
-      });
     }
 
     loadBrandCatalog().catch(() => {
@@ -906,6 +887,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     }
   }
 
+  function clearManualForm() {
+    setForm((current) => ({
+      ...defaultForm,
+      mes: current.mes
+    }));
+    setPreviousValuesOpen(false);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canManageManualLines) return;
@@ -930,10 +919,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
       setForm((current) => ({
         ...defaultForm,
-        moneda: current.moneda,
-        plataforma: current.plataforma,
-        anunciante: current.anunciante,
-        marca: current.marca
+        mes: current.mes
       }));
       await loadInvestments(getDateRange(datePreset, customMonth), datePreset);
       await loadManualPreview();
@@ -1038,6 +1024,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   function applyManualSuggestion(suggestion: ManualHistoryLine) {
     setForm((current) => ({
       ...current,
+      moneda: suggestion.moneda,
       objetivo: suggestion.objetivo,
       campana: suggestion.campana ?? '',
       presupuesto: String(suggestion.presupuesto),
@@ -1342,7 +1329,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
         <section className={`manual-grid ${canManageManualLines ? '' : 'viewer'}`}>
           {canManageManualLines ? (
             <form className="manual-form" onSubmit={handleSubmit}>
-              <h2>Nuevo Presupuesto</h2>
+              <div className="manual-form-header">
+                <h2>Nuevo Presupuesto</h2>
+                <button className="secondary-button" type="button" onClick={clearManualForm}>
+                  Limpiar
+                </button>
+              </div>
               <div className="form-grid">
                 <MonthField
                   label="Mes"
@@ -1376,20 +1368,25 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                   onOpenSelect={setOpenSelectId}
                   onChange={(value) => setForm({ ...form, marca: value })}
                 />
-                <SelectField label="Moneda" value={form.moneda} options={[...currencies]} id="manual-moneda" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, moneda: value as InvestmentCurrency })} />
+                <SelectField label="Moneda" value={form.moneda} options={[...currencies]} placeholder="Selecciona moneda" id="manual-moneda" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, moneda: value as InvestmentCurrency | '' })} />
                 <SelectField
                   label="Plataforma"
                   value={form.plataforma}
                   options={['META', 'Google', 'Merc. Libre', 'TikTok']}
+                  placeholder="Selecciona plataforma"
                   id="manual-plataforma"
                   openSelectId={openSelectId}
                   onOpenSelect={setOpenSelectId}
                   onChange={(value) => {
+                    if (!value) {
+                      setForm({ ...form, plataforma: '', objetivo: '' });
+                      return;
+                    }
                     const options = getObjectiveOptions(value);
                     setForm({ ...form, plataforma: value, objetivo: options.includes(form.objetivo) ? form.objetivo : options[0] });
                   }}
                 />
-                <SelectField label="Objetivo" value={form.objetivo} options={objectiveOptions} id="manual-objetivo" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, objetivo: value })} />
+                <SelectField label="Objetivo" value={form.objetivo} options={objectiveOptions} placeholder="Selecciona objetivo" id="manual-objetivo" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, objetivo: value })} />
                 <Field label="Campaña" value={form.campana} required={false} onChange={(value) => setForm({ ...form, campana: value })} />
                 <Field label="Presupuesto" type="number" value={form.presupuesto} onChange={(value) => setForm({ ...form, presupuesto: value })} />
                 <Field label="Costo x resultado" type="number" value={form.costoPorResultado} onChange={(value) => setForm({ ...form, costoPorResultado: value })} />
@@ -1406,7 +1403,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                   </button>
                 </div>
               ) : null}
-              <button className="primary-button" type="submit" disabled={saving || formMonthFinished || !form.anunciante || !form.marca}>
+              <button className="primary-button" type="submit" disabled={saving || formMonthFinished || !form.anunciante || !form.marca || !form.moneda || !form.plataforma || !form.objetivo}>
                 {saving ? 'Guardando...' : 'Agregar'}
               </button>
             </form>
@@ -1778,11 +1775,17 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                   <div className="campaign-suggestion-top">
                     <div>
                       <strong>{getCampaignSuggestionLabel(suggestion)}</strong>
-                      <span>{formatMonthLabel(suggestion.mes)}</span>
+                      <div className="campaign-suggestion-meta">
+                        <span>{formatMonthLabel(suggestion.mes)}</span>
+                        <span>{suggestion.objetivo}</span>
+                      </div>
                     </div>
-                    <span>{suggestion.objetivo}</span>
                   </div>
                   <dl>
+                    <div>
+                      <dt>Moneda</dt>
+                      <dd>{suggestion.moneda}</dd>
+                    </div>
                     <div>
                       <dt>Presupuesto</dt>
                       <dd>{formatMoney(suggestion.presupuesto, suggestion.moneda)}</dd>
