@@ -7,6 +7,9 @@ import { BrandMappingService } from '../../common/brand-mapping/brand-mapping.se
 import { ManualInvestmentsRepository } from './manual-investments.repository';
 import { AuthUser } from '../auth/auth.types';
 
+const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class InvestmentsService {
   private manualLines = new Map<string, ManualInvestmentLine>();
@@ -478,13 +481,18 @@ export class InvestmentsService {
   }
 
   private getYesterdayDate(): string {
-    const date = new Date();
-    date.setDate(date.getDate() - 1);
-    return date.toISOString().slice(0, 10);
+    const todayParts = this.getOperationalDateParts(new Date());
+    const todayStart = this.getZonedDateTime(
+      Number(todayParts.year),
+      Number(todayParts.month),
+      Number(todayParts.day)
+    );
+
+    return this.formatOperationalDate(new Date(todayStart - MILLISECONDS_PER_DAY));
   }
 
   private currentMonth(): string {
-    return new Date().toISOString().slice(0, 7);
+    return this.formatOperationalDate(new Date()).slice(0, 7);
   }
 
   private daysInMonth(mes: string): number {
@@ -510,6 +518,7 @@ export class InvestmentsService {
 
   private getRemainingDayEquivalents(mes: string, date: string): number {
     if (date < `${mes}-01`) return this.daysInMonth(mes);
+    if (date >= `${mes}-${String(this.daysInMonth(mes)).padStart(2, '0')}`) return 0;
 
     const totalBudgetMinutes = Math.max(this.daysInMonth(mes) - 1, 0) * 1440;
     return Math.max((totalBudgetMinutes - this.getElapsedMinutes(mes, date)) / 1440, 0);
@@ -522,12 +531,11 @@ export class InvestmentsService {
     if (Number.isNaN(syncDate.getTime())) return null;
 
     const [year, month] = mes.split('-').map(Number);
-    const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
-    const monthEndStart = new Date(year, month - 1, this.daysInMonth(mes), 0, 0, 0, 0);
-    if (syncDate < monthStart) return this.daysInMonth(mes);
+    const monthStart = this.getZonedDateTime(year, month, 1);
+    const monthEndStart = this.getZonedDateTime(year, month, this.daysInMonth(mes));
+    if (syncDate.getTime() < monthStart) return this.daysInMonth(mes);
 
-    const millisecondsPerDay = 24 * 60 * 60 * 1000;
-    return Math.max((monthEndStart.getTime() - syncDate.getTime()) / millisecondsPerDay, 0);
+    return Math.max((monthEndStart - syncDate.getTime()) / MILLISECONDS_PER_DAY, 0);
   }
 
   private getElapsedMinutes(mes: string, date: string): number {
@@ -536,9 +544,9 @@ export class InvestmentsService {
 
     const day = Math.min(Math.max(Number(date.slice(8, 10)), 0), days);
     if (this.isTodayInMonth(mes, date)) {
-      const now = new Date();
+      const now = this.getOperationalDateParts(new Date());
       return Math.min(
-        ((day - 1) * 1440) + (now.getHours() * 60) + now.getMinutes() + (now.getSeconds() / 60),
+        ((day - 1) * 1440) + (now.hour * 60) + now.minute + (now.second / 60),
         days * 1440
       );
     }
@@ -547,14 +555,64 @@ export class InvestmentsService {
   }
 
   private isTodayInMonth(mes: string, date: string): boolean {
-    return date === this.formatLocalDate(new Date()) && date.startsWith(mes);
+    return date === this.formatOperationalDate(new Date()) && date.startsWith(mes);
   }
 
-  private formatLocalDate(date: Date): string {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
+  private formatOperationalDate(date: Date): string {
+    const { year, month, day } = this.getOperationalDateParts(date);
     return `${year}-${month}-${day}`;
+  }
+
+  private getZonedDateTime(year: number, month: number, day: number): number {
+    const utcWallTime = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+    let offset = this.getTimeZoneOffset(new Date(utcWallTime));
+    const firstPass = utcWallTime - offset;
+    offset = this.getTimeZoneOffset(new Date(firstPass));
+    return utcWallTime - offset;
+  }
+
+  private getTimeZoneOffset(date: Date): number {
+    const parts = this.getOperationalDateParts(date);
+    const utcWallTime = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      parts.hour,
+      parts.minute,
+      parts.second
+    );
+
+    return utcWallTime - date.getTime();
+  }
+
+  private getOperationalDateParts(date: Date): {
+    year: string;
+    month: string;
+    day: string;
+    hour: number;
+    minute: number;
+    second: number;
+  } {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: OPERATIONAL_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    }).formatToParts(date);
+    const getPart = (type: string) => parts.find((part) => part.type === type)?.value || '00';
+
+    return {
+      year: getPart('year'),
+      month: getPart('month'),
+      day: getPart('day'),
+      hour: Number(getPart('hour')),
+      minute: Number(getPart('minute')),
+      second: Number(getPart('second'))
+    };
   }
 
   private sortManualLines(a: ManualInvestmentLine, b: ManualInvestmentLine): number {
