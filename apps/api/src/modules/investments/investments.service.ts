@@ -509,8 +509,10 @@ export class InvestmentsService {
   }
 
   private getRemainingDayEquivalents(mes: string, date: string): number {
-    const totalMinutes = this.daysInMonth(mes) * 1440;
-    return Math.max((totalMinutes - this.getElapsedMinutes(mes, date)) / 1440, 0);
+    if (date < `${mes}-01`) return this.daysInMonth(mes);
+
+    const totalBudgetMinutes = Math.max(this.daysInMonth(mes) - 1, 0) * 1440;
+    return Math.max((totalBudgetMinutes - this.getElapsedMinutes(mes, date)) / 1440, 0);
   }
 
   private getRemainingDayEquivalentsFromSync(mes: string, syncedAt?: string | null): number | null {
@@ -521,11 +523,11 @@ export class InvestmentsService {
 
     const [year, month] = mes.split('-').map(Number);
     const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
-    const nextMonthStart = new Date(year, month, 1, 0, 0, 0, 0);
+    const monthEndStart = new Date(year, month - 1, this.daysInMonth(mes), 0, 0, 0, 0);
     if (syncDate < monthStart) return this.daysInMonth(mes);
 
     const millisecondsPerDay = 24 * 60 * 60 * 1000;
-    return Math.max((nextMonthStart.getTime() - syncDate.getTime()) / millisecondsPerDay, 0);
+    return Math.max((monthEndStart.getTime() - syncDate.getTime()) / millisecondsPerDay, 0);
   }
 
   private getElapsedMinutes(mes: string, date: string): number {
