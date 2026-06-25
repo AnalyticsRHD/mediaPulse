@@ -16,9 +16,10 @@ export class InvestmentsController {
     @Query('date') date?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
-    @Query('includeDrafts') includeDrafts?: string
+    @Query('includeDrafts') includeDrafts?: string,
+    @Query('mode') mode?: 'thisMonth' | 'yesterday' | 'previousMonth' | 'custom'
   ) {
-    return this.investmentsService.findAll(mes, date, startDate, endDate, includeDrafts === 'true');
+    return this.investmentsService.findAll(mes, date, startDate, endDate, includeDrafts === 'true', mode);
   }
 
   @Get('manual')

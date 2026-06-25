@@ -174,14 +174,37 @@ export class ConfigService {
   }
 
   get mercadoLibreAccessToken(): string {
-    return process.env.MERCADO_LIBRE_ACCESS_TOKEN || '';
+    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_ACCESS_TOKEN || '');
   }
 
   get mercadoLibreAdvertiserIds(): string[] {
     return (process.env.MERCADO_LIBRE_ADVERTISER_IDS || '')
       .split(',')
-      .map((value) => value.trim())
+      .map((value) => this.cleanPlaceholder(value))
       .filter(Boolean);
+  }
+
+  get mercadoLibreApiBaseUrl(): string {
+    return process.env.MERCADO_LIBRE_API_BASE_URL || 'https://api.mercadolibre.com';
+  }
+
+  get mercadoLibreAdsApiBaseUrl(): string {
+    return process.env.MERCADO_LIBRE_ADS_API_BASE_URL || 'https://ads.mercadolibre.com.ar/advertiser-hub/api';
+  }
+
+  get mercadoLibreProducts(): string[] {
+    return (process.env.MERCADO_LIBRE_PRODUCTS || 'PADS,DSP')
+      .split(',')
+      .map((value) => this.cleanPlaceholder(value).trim().toUpperCase())
+      .filter(Boolean);
+  }
+
+  get mercadoLibreWebCookie(): string {
+    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_WEB_COOKIE || '');
+  }
+
+  get mercadoLibreWebCsrfToken(): string {
+    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_WEB_CSRF_TOKEN || '');
   }
 
   get mercadoLibreSourceSpreadsheetId(): string {

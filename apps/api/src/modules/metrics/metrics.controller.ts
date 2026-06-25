@@ -9,6 +9,8 @@ import {
   SupermetricsSource
 } from '../../common/external-apis/external-apis.service';
 
+const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
+
 @Controller('metrics')
 export class MetricsController {
   private readonly logger = new Logger(MetricsController.name);
@@ -88,7 +90,7 @@ export class MetricsController {
 
     return {
       scope,
-      date: date || new Date().toISOString().slice(0, 10),
+      date: date || this.today(),
       totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
       results
     };
@@ -100,20 +102,25 @@ export class MetricsController {
     @Query('date') date?: string
   ) {
     await this.metricsService.markSyncStarted('consumption');
-    const targetDate = date || new Date().toISOString().slice(0, 10);
-    const yesterday = this.previousDate(targetDate);
+    const targetDate = date || this.today();
+    const monthlyDate = targetDate;
+    const dailyDate = targetDate;
+    const previousDailyDate = this.previousDate(targetDate);
     const sources: SupermetricsSource[] = source === 'all' ? ['linkedin'] : [source];
     const results = [];
 
     try {
       for (const currentSource of sources) {
-        results.push(await this.safeSyncSupermetricsSource(currentSource, 'monthly', targetDate));
-        results.push(await this.safeSyncSupermetricsSource(currentSource, 'daily', yesterday));
+        results.push(await this.safeSyncSupermetricsSource(currentSource, 'monthly', monthlyDate));
+        results.push(await this.safeSyncSupermetricsSource(currentSource, 'daily', dailyDate));
+        results.push(await this.safeSyncSupermetricsSource(currentSource, 'daily', previousDailyDate));
       }
 
       const response = {
         date: targetDate,
-        dailyDate: yesterday,
+        monthlyDate,
+        dailyDate,
+        previousDailyDate,
         totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
         results
       };
@@ -135,20 +142,25 @@ export class MetricsController {
     @Query('date') date?: string
   ) {
     await this.metricsService.markSyncStarted('consumption');
-    const targetDate = date || new Date().toISOString().slice(0, 10);
-    const yesterday = this.previousDate(targetDate);
+    const targetDate = date || this.today();
+    const monthlyDate = targetDate;
+    const dailyDate = targetDate;
+    const previousDailyDate = this.previousDate(targetDate);
     const sources = source === 'all' ? this.getAllAdsSources() : [source];
 
     try {
       const results = await Promise.all(
         sources.flatMap((currentSource) => [
-          this.safeSyncAdsSource(currentSource, 'monthly', targetDate),
-          this.safeSyncAdsSource(currentSource, 'daily', yesterday)
+          this.safeSyncAdsSource(currentSource, 'monthly', monthlyDate),
+          this.safeSyncAdsSource(currentSource, 'daily', dailyDate),
+          this.safeSyncAdsSource(currentSource, 'daily', previousDailyDate)
         ])
       );
       const response = {
         date: targetDate,
-        dailyDate: yesterday,
+        monthlyDate,
+        dailyDate,
+        previousDailyDate,
         totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
         results
       };
@@ -179,7 +191,7 @@ export class MetricsController {
     return {
       source: `supermetrics-${source}`,
       scope,
-      date: date || new Date().toISOString().slice(0, 10),
+      date: date || this.today(),
       synced: metrics.length,
       metrics
     };
@@ -194,7 +206,7 @@ export class MetricsController {
       return {
         source: `supermetrics-${source}`,
         scope,
-        date: date || new Date().toISOString().slice(0, 10),
+        date: date || this.today(),
         synced: 0,
         status: 'failed',
         error: message,
@@ -218,7 +230,7 @@ export class MetricsController {
     return {
       source,
       scope,
-      date: date || new Date().toISOString().slice(0, 10),
+      date: date || this.today(),
       synced: metrics.length,
       metrics
     };
@@ -243,7 +255,7 @@ export class MetricsController {
       return {
         source,
         scope,
-        date: date || new Date().toISOString().slice(0, 10),
+        date: date || this.today(),
         synced: 0,
         status: 'failed',
         error: message,
@@ -283,6 +295,18 @@ export class MetricsController {
     const value = new Date(`${date}T00:00:00.000Z`);
     value.setUTCDate(value.getUTCDate() - 1);
     return value.toISOString().slice(0, 10);
+  }
+
+  private today(): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: OPERATIONAL_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(new Date());
+    const getPart = (type: string) => parts.find((part) => part.type === type)?.value || '00';
+
+    return `${getPart('year')}-${getPart('month')}-${getPart('day')}`;
   }
 
   @Put(':id')

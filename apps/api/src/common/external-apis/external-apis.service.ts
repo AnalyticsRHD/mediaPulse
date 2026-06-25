@@ -4,6 +4,8 @@ import { ConfigService } from '../../config/config.service';
 import { DailyMetrics } from '@mediapulse/shared';
 import { BrandMappingService } from '../brand-mapping/brand-mapping.service';
 
+const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
+
 export type SupermetricsSource = 'linkedin';
 export type SupermetricsScope = 'monthly' | 'daily';
 export type NativeAdsSource = 'google' | 'meta' | 'tiktok' | 'mercadolibre';
@@ -24,6 +26,17 @@ type AdsSheetColumnMap = {
   conversions?: number;
   revenue?: number;
   referencia?: number;
+};
+
+type MercadoLibreAdvertiserConfig = {
+  id: string;
+  accountName?: string;
+  referencia?: string;
+};
+
+type MercadoLibreWebMetricRow = {
+  name?: string;
+  value?: string | number;
 };
 
 @Injectable()
@@ -644,6 +657,255 @@ export class ExternalApisService {
   }
 
   async fetchMercadoLibreMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+    const webMetrics = await this.fetchMercadoLibreWebMetrics(scope, date);
+    if (webMetrics.length > 0) return webMetrics;
+
+    const apiMetrics = await this.fetchMercadoLibreApiMetrics(scope, date);
+    if (apiMetrics.length > 0) return apiMetrics;
+
+    return this.fetchMercadoLibreSheetMetrics(scope, date);
+  }
+
+  private async fetchMercadoLibreWebMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+    const cookie = this.configService.mercadoLibreWebCookie;
+    const csrfToken = this.configService.mercadoLibreWebCsrfToken;
+    const products = this.configService.mercadoLibreProducts;
+    const configuredAdvertisers = this.parseMercadoLibreAdvertisers(this.configService.mercadoLibreAdvertiserIds);
+    const accessToken = this.configService.mercadoLibreAccessToken;
+
+    if (!cookie || !csrfToken || products.length === 0) return [];
+
+    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const endDate = date;
+
+    try {
+      const advertisers = configuredAdvertisers.length > 0
+        ? configuredAdvertisers
+        : accessToken
+          ? await this.fetchMercadoLibreAdvertisers(accessToken)
+          : [];
+
+      if (advertisers.length === 0) {
+        this.warnMissingConfig(
+          'mercadolibre-web-advertisers',
+          'Mercado Libre web sync requires MERCADO_LIBRE_ADVERTISER_IDS or a valid access token to discover advertisers.'
+        );
+        return [];
+      }
+
+      const out: DailyMetrics[] = [];
+      let index = 0;
+
+      for (const advertiser of advertisers) {
+        let spend = 0;
+
+        for (const product of products) {
+          const rows = await this.fetchMercadoLibreWebProductMetrics(
+            advertiser.id,
+            product,
+            startDate,
+            endDate,
+            cookie,
+            csrfToken
+          );
+          const investment = rows.find((row) => String(row.name || '').toLowerCase() === 'investment');
+          const value = this.numberValue(investment?.value);
+          if (value) {
+            spend += value;
+          }
+        }
+
+        if (!spend) continue;
+
+        const accountName = advertiser.accountName || advertiser.referencia || advertiser.id;
+        const referencia = advertiser.referencia || accountName;
+        const mapping = await this.brandMappingService.resolve(referencia);
+        const metricDate = scope === 'monthly' ? this.monthStart(date) : date;
+
+        out.push({
+          date: metricDate,
+          cliente: mapping.cliente,
+          marca: mapping.marca,
+          referencia,
+          accountId: advertiser.id,
+          accountName,
+          plataforma: 'Merc. Libre',
+          campaignId: `MercadoLibre-${advertiser.id}-web-${scope}-${metricDate}-${index}`,
+          campaignName: accountName,
+          granularity: scope,
+          coverageEndDate: scope === 'monthly' ? endDate : undefined,
+          spend: this.round2(spend),
+          impressions: 0,
+          clicks: 0,
+          conversions: 0,
+          revenue: 0
+        });
+        index += 1;
+      }
+
+      return out.sort((a, b) => {
+        if (a.date === b.date) return (a.accountName || '').localeCompare(b.accountName || '');
+        return a.date.localeCompare(b.date);
+      });
+    } catch (error) {
+      const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Mercado Libre web ${scope} sync skipped, falling back to API/Sheets: ${detail}`);
+      return [];
+    }
+  }
+
+  private async fetchMercadoLibreWebProductMetrics(
+    advertiserId: string,
+    productId: string,
+    startDate: string,
+    endDate: string,
+    cookie: string,
+    csrfToken: string
+  ): Promise<MercadoLibreWebMetricRow[]> {
+    const baseUrl = this.configService.mercadoLibreAdsApiBaseUrl.replace(/\/+$/, '');
+    const response = await axios.get(
+      `${baseUrl}/advertiser/${encodeURIComponent(advertiserId)}/product/${encodeURIComponent(productId)}/metrics`,
+      {
+        headers: {
+          Accept: 'application/json, text/plain, */*',
+          Cookie: cookie,
+          Origin: 'https://ads.mercadolibre.com.ar',
+          Referer: `https://ads.mercadolibre.com.ar/hub/summary?advertiserId=${encodeURIComponent(advertiserId)}`,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149 Safari/537.36',
+          'csrf-token': csrfToken,
+          'x-csrf-token': csrfToken
+        },
+        params: {
+          date_from: startDate,
+          date_to: endDate,
+          siteId: 'MLA'
+        },
+        timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000,
+        validateStatus: (status) => (status >= 200 && status < 300) || status === 400 || status === 404
+      }
+    );
+
+    if (response.status === 400 || response.status === 404) return [];
+    return Array.isArray(response.data) ? response.data : [];
+  }
+
+  private async fetchMercadoLibreApiMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+    const accessToken = this.configService.mercadoLibreAccessToken;
+    const configuredAdvertisers = this.parseMercadoLibreAdvertisers(this.configService.mercadoLibreAdvertiserIds);
+
+    if (!accessToken) {
+      this.warnMissingConfig('mercadolibre-api', 'Mercado Libre access token not configured. Falling back to Sheets.');
+      return [];
+    }
+
+    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const endDate = date;
+    const aggregated = new Map<string, {
+      advertiserId: string;
+      accountName: string;
+      referencia: string;
+      campaignId: string;
+      campaignName: string;
+      spend: number;
+    }>();
+
+    try {
+      const advertisers = configuredAdvertisers.length > 0
+        ? configuredAdvertisers
+        : await this.fetchMercadoLibreAdvertisers(accessToken);
+
+      for (const advertiser of advertisers) {
+        const campaigns = await this.fetchMercadoLibreCampaigns(accessToken, advertiser.id);
+        const effectiveCampaigns = campaigns.length > 0 ? campaigns : [{
+          id: advertiser.id,
+          name: advertiser.accountName || advertiser.id
+        }];
+
+        for (const campaign of effectiveCampaigns) {
+          const metricRows = await this.fetchMercadoLibreCampaignMetrics(
+            accessToken,
+            campaign.id,
+            startDate,
+            endDate
+          );
+          const accountName = advertiser.accountName || advertiser.referencia || advertiser.id;
+          const referencia = advertiser.referencia || accountName;
+
+          for (const row of metricRows) {
+            const metricDate = String(
+              row.date
+              || row.day
+              || row.stat_time_day
+              || row.period
+              || endDate
+            ).slice(0, 10);
+            const bucketDate = scope === 'monthly' ? this.monthStart(metricDate) : metricDate;
+            const spend = this.numberValue(
+              row.cost
+              ?? row.spend
+              ?? row.investment
+              ?? row.amount
+              ?? row.metrics?.cost
+              ?? row.metrics?.spend
+            );
+            if (spend === 0) continue;
+
+            const campaignName = String(campaign.name || row.campaign_name || row.name || campaign.id);
+            const key = `${bucketDate}||${advertiser.id}||${accountName}||${campaign.id}||${campaignName}`;
+            const existing = aggregated.get(key) ?? {
+              advertiserId: advertiser.id,
+              accountName,
+              referencia,
+              campaignId: campaign.id,
+              campaignName,
+              spend: 0
+            };
+            existing.spend += spend;
+            aggregated.set(key, existing);
+          }
+        }
+      }
+
+      const out: DailyMetrics[] = [];
+      let index = 0;
+
+      for (const [key, value] of aggregated.entries()) {
+        const [metricDate] = key.split('||');
+        const mapping = await this.brandMappingService.resolve(value.referencia);
+
+        out.push({
+          date: metricDate,
+          cliente: mapping.cliente,
+          marca: mapping.marca,
+          referencia: value.referencia,
+          accountId: value.advertiserId,
+          accountName: value.accountName,
+          plataforma: 'Merc. Libre',
+          campaignId: `MercadoLibre-${value.advertiserId}-${value.campaignId}-${scope}-${metricDate}-${index}`,
+          campaignName: value.campaignName,
+          granularity: scope,
+          coverageEndDate: scope === 'monthly' ? endDate : undefined,
+          spend: this.round2(value.spend),
+          impressions: 0,
+          clicks: 0,
+          conversions: 0,
+          revenue: 0
+        });
+        index += 1;
+      }
+
+      return out.sort((a, b) => {
+        if (a.date === b.date) return (a.accountName || '').localeCompare(b.accountName || '');
+        return a.date.localeCompare(b.date);
+      });
+    } catch (error) {
+      const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Mercado Libre API ${scope} sync skipped, falling back to Sheets: ${detail}`);
+      return [];
+    }
+  }
+
+  private async fetchMercadoLibreSheetMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
     const spreadsheetId = this.configService.mercadoLibreSourceSpreadsheetId;
     const rawSheets = this.configService.mercadoLibreRawSheets;
 
@@ -654,21 +916,23 @@ export class ExternalApisService {
 
     const startDate = scope === 'monthly' ? this.monthStart(date) : date;
     const endDate = date;
-    const aggregated = new Map<string, { accountName: string; spend: number }>();
+    const aggregated = new Map<string, { accountName: string; spend: number; coverageEndDate: string }>();
 
     try {
       for (const sheetName of rawSheets) {
         const rows = await this.fetchGoogleSheetRows(spreadsheetId, sheetName);
         const accountName = sheetName.replace(/\s-\sDisplay$/i, '').trim();
+        const columnMap = this.getMercadoLibreSheetColumnMap(rows[0]);
 
         for (const row of rows.slice(1)) {
-          const rowDate = this.normalizeSheetDate(row[2]);
+          const rowDate = this.normalizeSheetDate(row[columnMap.date]);
           if (!rowDate || rowDate < startDate || rowDate > endDate) continue;
 
           const bucketDate = scope === 'monthly' ? this.monthStart(rowDate) : rowDate;
           const key = `${bucketDate}||${accountName}`;
-          const existing = aggregated.get(key) ?? { accountName, spend: 0 };
-          existing.spend += this.numberValue(row[5]);
+          const existing = aggregated.get(key) ?? { accountName, spend: 0, coverageEndDate: rowDate };
+          existing.spend += this.numberValue(row[columnMap.cost]);
+          if (rowDate > existing.coverageEndDate) existing.coverageEndDate = rowDate;
           aggregated.set(key, existing);
         }
       }
@@ -691,6 +955,7 @@ export class ExternalApisService {
           campaignId: `MercadoLibre-${this.normalizeHeader(value.accountName)}-${scope}-${metricDate}-${index}`,
           campaignName: value.accountName,
           granularity: scope,
+          coverageEndDate: scope === 'monthly' ? value.coverageEndDate : undefined,
           spend: this.round2(value.spend),
           impressions: 0,
           clicks: 0,
@@ -714,6 +979,138 @@ export class ExternalApisService {
       this.logger.error(`Mercado Libre ${scope} sync failed: ${error instanceof Error ? error.message : String(error)}`);
       throw new ServiceUnavailableException('Mercado Libre sync failed');
     }
+  }
+
+  private parseMercadoLibreAdvertisers(rawAdvertisers: string[]): MercadoLibreAdvertiserConfig[] {
+    return rawAdvertisers
+      .map((raw): MercadoLibreAdvertiserConfig | null => {
+        const [idPart, accountNamePart, referenciaPart] = raw.split(':').map((value) => value.trim());
+        const id = idPart || '';
+        if (!id) return null;
+
+        return {
+          id,
+          accountName: accountNamePart || undefined,
+          referencia: referenciaPart || accountNamePart || undefined
+        };
+      })
+      .filter((value: MercadoLibreAdvertiserConfig | null): value is MercadoLibreAdvertiserConfig => Boolean(value));
+  }
+
+  private async fetchMercadoLibreAdvertisers(accessToken: string): Promise<MercadoLibreAdvertiserConfig[]> {
+    const response = await axios.get(
+      `${this.configService.mercadoLibreApiBaseUrl}/advertising/advertisers`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: { product_id: 'PADS' },
+        timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
+      }
+    );
+    const advertisers = response.data?.advertisers || this.extractMercadoLibreList(response.data);
+
+    return advertisers
+      .map((advertiser: any): MercadoLibreAdvertiserConfig | null => {
+        const id = String(advertiser.advertiser_id || advertiser.id || '');
+        if (!id) return null;
+        const accountName = String(advertiser.advertiser_name || advertiser.name || advertiser.account_name || id);
+
+        return {
+          id,
+          accountName,
+          referencia: accountName
+        };
+      })
+      .filter((value: MercadoLibreAdvertiserConfig | null): value is MercadoLibreAdvertiserConfig => Boolean(value));
+  }
+
+  private async fetchMercadoLibreCampaigns(accessToken: string, advertiserId: string): Promise<Array<{ id: string; name?: string }>> {
+    const campaigns: Array<{ id: string; name?: string }> = [];
+    let offset = 0;
+    const limit = 50;
+
+    do {
+      const response = await axios.get(
+        `${this.configService.mercadoLibreApiBaseUrl}/advertising/advertisers/${encodeURIComponent(advertiserId)}/product_ads/campaigns`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          params: { offset, limit },
+          timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
+        }
+      );
+      const rows = this.extractMercadoLibreList(response.data);
+
+      rows.forEach((row) => {
+        const id = String(row.id || row.campaign_id || row.campaignId || '');
+        if (!id) return;
+        campaigns.push({
+          id,
+          name: row.name || row.campaign_name || row.campaignName
+        });
+      });
+
+      if (rows.length < limit) break;
+      offset += limit;
+    } while (offset < 10000);
+
+    return campaigns;
+  }
+
+  private async fetchMercadoLibreCampaignMetrics(
+    accessToken: string,
+    campaignId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<any[]> {
+    const response = await axios.get(
+      `${this.configService.mercadoLibreApiBaseUrl}/advertising/product_ads/campaigns/${encodeURIComponent(campaignId)}/metrics`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: {
+          date_from: startDate,
+          date_to: endDate,
+          metrics: 'cost,spend,investment,clicks,prints,impressions'
+        },
+        timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
+      }
+    );
+    const rows = this.extractMercadoLibreList(response.data);
+
+    if (rows.length > 0) return rows;
+    return [response.data];
+  }
+
+  private extractMercadoLibreList(data: any): any[] {
+    if (Array.isArray(data)) return data;
+    if (!data || typeof data !== 'object') return [];
+
+    const candidates = [
+      data.results,
+      data.campaigns,
+      data.metrics,
+      data.list,
+      data.data?.results,
+      data.data?.campaigns,
+      data.data?.metrics,
+      data.data?.list
+    ];
+    const list = candidates.find((value) => Array.isArray(value));
+    return list || [];
+  }
+
+  private getMercadoLibreSheetColumnMap(headerRow: any[] | undefined): { date: number; cost: number } {
+    const fallback = { date: 2, cost: 5 };
+    if (!headerRow) return fallback;
+
+    const headers = headerRow.map((value) => this.normalizeHeader(String(value || '')));
+    const indexOf = (names: string[]) => {
+      const index = headers.findIndex((header) => names.includes(header));
+      return index >= 0 ? index : undefined;
+    };
+
+    return {
+      date: indexOf(['date', 'day', 'fecha', 'dia']) ?? fallback.date,
+      cost: indexOf(['cost', 'costs', 'spend', 'amountspent', 'amount_spent', 'consumo', 'costo', 'inversion', 'inversin']) ?? fallback.cost
+    };
   }
 
   async fetchMetaMetrics(accountId: string, dateFrom: string, dateTo: string): Promise<DailyMetrics[]> {
@@ -1214,18 +1611,16 @@ export class ExternalApisService {
     if (explicitDate) return this.normalizeDate(explicitDate);
 
     if (dateRangeType === 'yesterday') {
-      const date = new Date();
-      date.setDate(date.getDate() - 1);
-      return date.toISOString().slice(0, 10);
+      return this.previousDate(this.today());
     }
 
     const month = this.firstValue(record, ['month']);
     if (month) {
-      const year = new Date().getFullYear();
+      const year = this.today().slice(0, 4);
       return `${year}-${String(Number(month)).padStart(2, '0')}-01`;
     }
 
-    return new Date().toISOString().slice(0, 10);
+    return this.today();
   }
 
   private normalizeDate(value: string): string {
@@ -1234,11 +1629,25 @@ export class ExternalApisService {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
 
-    return new Date().toISOString().slice(0, 10);
+    return this.today();
   }
 
   private today(): string {
-    return new Date().toISOString().slice(0, 10);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: OPERATIONAL_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(new Date());
+    const getPart = (type: string) => parts.find((part) => part.type === type)?.value || '00';
+
+    return `${getPart('year')}-${getPart('month')}-${getPart('day')}`;
+  }
+
+  private previousDate(date: string): string {
+    const value = new Date(`${date}T00:00:00.000Z`);
+    value.setUTCDate(value.getUTCDate() - 1);
+    return value.toISOString().slice(0, 10);
   }
 
   private monthStart(date: string): string {

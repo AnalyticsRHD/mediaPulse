@@ -4,6 +4,7 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from '
 import { useRouter } from 'next/navigation';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
+const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
 const currencies = ['ARS', 'CHL', 'USD'] as const;
 const investmentStatuses = ['EN_PROCESO', 'PRESUPUESTO_OK'] as const;
 const datePresetOptions = [
@@ -166,13 +167,19 @@ type ManualHistoryLine = Omit<ManualForm, 'moneda' | 'presupuesto' | 'costoPorRe
 };
 
 function yesterdayDate() {
-  const date = new Date();
-  date.setDate(date.getDate() - 1);
-  return date.toISOString().slice(0, 10);
+  return addDays(todayDate(), -1);
 }
 
 function todayDate() {
-  return new Date().toISOString().slice(0, 10);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: OPERATIONAL_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const getPart = (type: string) => parts.find((part) => part.type === type)?.value || '00';
+
+  return `${getPart('year')}-${getPart('month')}-${getPart('day')}`;
 }
 
 function addDays(date: string, days: number) {
@@ -266,6 +273,11 @@ function getDateRange(preset: DatePreset, customMonth: string) {
 function getQueryMonth(preset: DatePreset, range: DateRange) {
   if (preset === 'previousMonth' || preset === 'custom') return range.startDate.slice(0, 7);
   return currentDate.slice(0, 7);
+}
+
+function getConsumptionSyncDate(preset: DatePreset, range: DateRange) {
+  if (preset === 'thisMonth') return todayDate();
+  return range.endDate;
 }
 
 const integer = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 });
@@ -686,7 +698,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     setErrorMessage('');
     try {
       const mes = getQueryMonth(preset, range);
-      const payload = await requestJson<InvestmentResponse>(`${API_BASE}/investments?mes=${mes}&startDate=${range.startDate}&endDate=${range.endDate}`, { cache: 'no-store' });
+      const payload = await requestJson<InvestmentResponse>(`${API_BASE}/investments?mes=${mes}&startDate=${range.startDate}&endDate=${range.endDate}&mode=${preset}`, { cache: 'no-store' });
       setData(payload);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo cargar inversiones');
@@ -704,7 +716,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   async function loadManualPreview(month = previewMonth) {
     try {
       const range = monthRange(month);
-      const payload = await requestJson<InvestmentResponse>(`${API_BASE}/investments?mes=${month}&startDate=${range.startDate}&endDate=${range.endDate}&includeDrafts=true`, { cache: 'no-store' });
+      const payload = await requestJson<InvestmentResponse>(`${API_BASE}/investments?mes=${month}&startDate=${range.startDate}&endDate=${range.endDate}&includeDrafts=true&mode=custom`, { cache: 'no-store' });
       setManualData(payload);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo cargar la carga manual');
@@ -877,13 +889,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     setSyncing(true);
     try {
       setErrorMessage('');
-      const response = await requestJson<MetricsSyncResponse>(`${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${selectedRange.endDate}`, {
+      const syncDate = getConsumptionSyncDate(datePreset, selectedRange);
+      const response = await requestJson<MetricsSyncResponse>(`${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${syncDate}`, {
         method: 'POST',
         timeoutMs: 90000
       });
       const syncedAt = response.syncStatus?.finishedAt || response.syncStatus?.startedAt || '';
       if (syncedAt) setLastConsumptionSyncAt(syncedAt);
-      await loadInvestments();
+      await loadInvestments(getDateRange(datePreset, customMonth), datePreset);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo actualizar consumo');
     } finally {

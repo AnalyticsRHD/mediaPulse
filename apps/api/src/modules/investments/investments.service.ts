@@ -9,6 +9,7 @@ import { AuthUser } from '../auth/auth.types';
 
 const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+type InvestmentRangeMode = 'thisMonth' | 'yesterday' | 'previousMonth' | 'custom';
 
 @Injectable()
 export class InvestmentsService {
@@ -26,7 +27,8 @@ export class InvestmentsService {
     date = this.getYesterdayDate(),
     startDate = date,
     endDate = date,
-    includeDrafts = false
+    includeDrafts = false,
+    mode: InvestmentRangeMode = 'thisMonth'
   ): Promise<InvestmentsResponse> {
     await this.hydrateManualLines();
     const safeStartDate = this.ensureDate(startDate, 'startDate');
@@ -34,6 +36,7 @@ export class InvestmentsService {
     const resolvedMes = this.ensureMonth(mes || safeStartDate.slice(0, 7), 'mes');
     const rangeEndDate = safeEndDate || safeStartDate || date;
     const rangeStartDate = safeStartDate || rangeEndDate;
+    const rangeMode = this.ensureRangeMode(mode);
     if (rangeStartDate > rangeEndDate) {
       throw new BadRequestException('startDate must be before or equal to endDate');
     }
@@ -41,12 +44,13 @@ export class InvestmentsService {
     const diasRestantes = this.getRemainingDays(resolvedMes, rangeEndDate);
     const remainingDayEquivalents = this.getRemainingDayEquivalents(resolvedMes, rangeEndDate);
     const ritmo = days > 0 ? this.getElapsedDayEquivalents(resolvedMes, rangeEndDate) / days : 0;
+    const latestConsumptionUpdatedAt = await this.getLatestConsumptionUpdatedAt();
     const lines = Array.from(this.manualLines.values())
       .filter((line) => line.mes === resolvedMes)
       .filter((line) => includeDrafts || line.status === InvestmentStatus.PRESUPUESTO_OK)
       .sort((a, b) => this.sortManualLines(a, b));
     const totalBudget = lines.reduce((sum, line) => sum + line.presupuesto, 0);
-    const builtLines = lines.map((line) => this.toInvestmentLine(line, totalBudget, days, remainingDayEquivalents, ritmo, rangeStartDate, rangeEndDate));
+    const builtLines = lines.map((line) => this.toInvestmentLine(line, totalBudget, days, remainingDayEquivalents, ritmo, rangeStartDate, rangeEndDate, latestConsumptionUpdatedAt, rangeMode));
     await this.persistConsumptionSnapshots(builtLines);
     const investmentLines = builtLines.map((builtLine) => builtLine.line);
     const consumoTotal = investmentLines.reduce((sum, line) => sum + line.consumo, 0);
@@ -164,19 +168,28 @@ export class InvestmentsService {
     remainingDayEquivalents: number,
     ritmo: number,
     startDate: string,
-    endDate: string
+    endDate: string,
+    latestConsumptionUpdatedAt: string | null,
+    mode: InvestmentRangeMode
   ): {
     line: InvestmentLine;
     sourceLine: ManualInvestmentLine;
     hasMonthlyMetrics: boolean;
     hasDailyMetrics: boolean;
   } {
-    const { consumo, consumoDia, hasMonthlyMetrics, hasDailyMetrics } = this.getConsumptionSnapshot(line, startDate, endDate);
+    const { consumo, consumoDia, hasMonthlyMetrics, hasDailyMetrics } = this.getConsumptionSnapshot(line, startDate, endDate, mode);
     const share = totalBudget > 0 ? line.presupuesto / totalBudget : 0;
     const porcentajeConsumo = line.presupuesto > 0 ? consumo / line.presupuesto : 0;
     const resultadosProyectados = this.getProjectedResults(line);
-    const remainingBudgetDayEquivalents = this.getRemainingDayEquivalentsFromSync(line.mes, line.lastConsumoUpdatedAt)
+    const consumoRestante = line.presupuesto - consumo;
+    const remainingBudgetDayEquivalents = this.getRemainingDayEquivalentsFromSync(
+      line.mes,
+      latestConsumptionUpdatedAt || line.lastConsumoUpdatedAt
+    )
       ?? remainingDayEquivalents;
+    const nuevoPresupuestoDiario = remainingBudgetDayEquivalents > 0
+      ? consumoRestante / remainingBudgetDayEquivalents
+      : 0;
 
     return {
       line: {
@@ -185,11 +198,11 @@ export class InvestmentsService {
         consumoDia,
         consumoAyer: consumoDia,
         presupuestoDaily: days > 0 ? line.presupuesto / days : 0,
-        nuevoPresupuestoDiario: remainingBudgetDayEquivalents > 0 ? (line.presupuesto - consumo) / remainingBudgetDayEquivalents : 0,
+        nuevoPresupuestoDiario,
         share,
         resultadosProyectados,
         fcProyectada: this.isSalesObjective(line.objetivo) ? resultadosProyectados * line.tktPromedio : 0,
-        consumoRestante: line.presupuesto - consumo,
+        consumoRestante,
         porcentajeConsumo,
         desvio: porcentajeConsumo - ritmo
       },
@@ -199,34 +212,87 @@ export class InvestmentsService {
     };
   }
 
-  private getConsumptionSnapshot(line: ManualInvestmentLine, startDate: string, endDate: string): {
+  private getConsumptionSnapshot(line: ManualInvestmentLine, startDate: string, endDate: string, mode: InvestmentRangeMode): {
     consumo: number;
     consumoDia: number;
     hasMonthlyMetrics: boolean;
     hasDailyMetrics: boolean;
   } {
     const monthlyBaseMetrics = this.getMonthlyMetricBaseCandidates(line);
-    const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, startDate, endDate);
+    const consumoDiaSnapshot = this.getDailyConsumptionSnapshot(
+      line,
+      this.getConsumoDiaDate(mode, endDate),
+      true
+    );
+    const consumoDia = consumoDiaSnapshot.consumo;
+    const isSingleDayRange = startDate === endDate;
+
+    if (isSingleDayRange) {
+      return {
+        consumo: consumoDia,
+        consumoDia,
+        hasMonthlyMetrics: false,
+        hasDailyMetrics: consumoDiaSnapshot.hasMetrics
+      };
+    }
+
     const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
-    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics);
-    const consumo = monthlyBaseMetrics.length > 0
+    const monthlyConsumo = monthlyBaseMetrics.length > 0
       ? this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1)
       : line.lastConsumo || 0;
-    const consumoDia = dailyBaseMetrics.length > 0
-      ? this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1)
-      : line.lastConsumoDia || 0;
+    const cutoffDailyConsumo = mode === 'thisMonth'
+      && this.isMonthToDateRange(line, startDate, endDate)
+      && !this.metricsCoverDate(monthlyMetrics, endDate)
+      ? this.getCutoffDailyConsumption(line, endDate)
+      : 0;
+    const consumo = monthlyConsumo + cutoffDailyConsumo;
 
     return {
       consumo,
       consumoDia,
       hasMonthlyMetrics: monthlyBaseMetrics.length > 0,
-      hasDailyMetrics: dailyBaseMetrics.length > 0
+      hasDailyMetrics: consumoDiaSnapshot.hasMetrics
     };
+  }
+
+  private isMonthToDateRange(line: ManualInvestmentLine, startDate: string, endDate: string): boolean {
+    return startDate === `${line.mes}-01` && endDate.startsWith(line.mes);
+  }
+
+  private getCutoffDailyConsumption(line: ManualInvestmentLine, endDate: string): number {
+    return this.getDailyConsumptionSnapshot(line, endDate, false).consumo;
+  }
+
+  private getConsumoDiaDate(mode: InvestmentRangeMode, endDate: string): string {
+    return mode === 'thisMonth' ? this.previousDate(endDate) : endDate;
+  }
+
+  private getDailyConsumptionSnapshot(line: ManualInvestmentLine, date: string, useFallback: boolean): {
+    consumo: number;
+    hasMetrics: boolean;
+  } {
+    if (!date.startsWith(line.mes)) {
+      return { consumo: 0, hasMetrics: false };
+    }
+
+    const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, date, date);
+    if (dailyBaseMetrics.length === 0) {
+      return { consumo: useFallback ? line.lastConsumoDia || 0 : 0, hasMetrics: false };
+    }
+    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics);
+    return {
+      consumo: this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1),
+      hasMetrics: true
+    };
+  }
+
+  private metricsCoverDate(metrics: Array<{ coverageEndDate?: string }>, endDate: string): boolean {
+    return metrics.length > 0 && metrics.every((metric) => (metric.coverageEndDate || '') >= endDate);
   }
 
   private getMatchedMetricsWithFallback(
     line: ManualInvestmentLine,
-    metrics: Array<{ objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string; spend: number }>
+    metrics: Array<{ objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string; spend: number; coverageEndDate?: string }>
   ) {
     const matched = metrics.filter((metric) => this.metricMatchesLine(line, metric));
     if (matched.length > 0) return matched;
@@ -664,11 +730,31 @@ export class InvestmentsService {
     throw new BadRequestException(`${field} must use YYYY-MM format`);
   }
 
+  private ensureRangeMode(value: InvestmentRangeMode | undefined): InvestmentRangeMode {
+    if (value && ['thisMonth', 'yesterday', 'previousMonth', 'custom'].includes(value)) return value;
+    return 'thisMonth';
+  }
+
+  private previousDate(date: string): string {
+    const value = new Date(`${date}T00:00:00.000Z`);
+    value.setUTCDate(value.getUTCDate() - 1);
+    return value.toISOString().slice(0, 10);
+  }
+
   private safeMetrics() {
     try {
       return this.metricsService.findAll();
     } catch {
       return [];
+    }
+  }
+
+  private async getLatestConsumptionUpdatedAt(): Promise<string | null> {
+    try {
+      const status = await this.metricsService.getSyncStatus('consumption');
+      return status.finishedAt || status.startedAt || null;
+    } catch {
+      return null;
     }
   }
 

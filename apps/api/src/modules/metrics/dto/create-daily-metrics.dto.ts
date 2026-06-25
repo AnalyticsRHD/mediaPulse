@@ -47,6 +47,10 @@ export class CreateDailyMetricsDto {
   @IsString()
   granularity?: 'daily' | 'monthly';
 
+  @IsOptional()
+  @IsString()
+  coverageEndDate?: string;
+
   @IsNumber()
   spend!: number;
 
@@ -92,6 +96,10 @@ export class UpdateDailyMetricsDto {
   @IsOptional()
   @IsString()
   granularity?: 'daily' | 'monthly';
+
+  @IsOptional()
+  @IsString()
+  coverageEndDate?: string;
 
   @IsOptional()
   @IsNumber()

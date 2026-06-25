@@ -94,6 +94,7 @@ export class MetricsService {
       adSetName: metrics.adSetName,
       adGroupName: metrics.adGroupName,
       granularity: metrics.granularity || 'daily',
+      coverageEndDate: metrics.coverageEndDate,
       spend: Number(metrics.spend || 0),
       impressions: Number(metrics.impressions || 0),
       clicks: Number(metrics.clicks || 0),

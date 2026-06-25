@@ -13,6 +13,7 @@ export interface DailyMetrics {
   accountId?: string;
   accountName?: string;
   granularity?: 'daily' | 'monthly';
+  coverageEndDate?: string;
   spend: number;
   impressions: number;
   clicks: number;
