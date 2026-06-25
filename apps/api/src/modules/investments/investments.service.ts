@@ -535,7 +535,7 @@ export class InvestmentsService {
     const monthEndStart = this.getZonedDateTime(year, month, this.daysInMonth(mes));
     if (syncDate.getTime() < monthStart) return this.daysInMonth(mes);
 
-    return Math.max((monthEndStart - syncDate.getTime()) / MILLISECONDS_PER_DAY, 0);
+    return Math.max((monthEndStart - syncDate.getTime()) / MILLISECONDS_PER_DAY, 0)+1;
   }
 
   private getElapsedMinutes(mes: string, date: string): number {
