@@ -399,16 +399,14 @@ export class InvestmentsService {
     const normalized = this.normalizeObjective(value);
     if (!normalized) return '';
     if (normalized.includes('alcance') || normalized.includes('reach')) return 'Alcance';
-    if (normalized.includes('lead')) return normalized.includes('mensaje') ? 'Leads-mensajes' : 'Leads';
+    if (normalized.includes('lead')) return normalized.includes('mensaje') ? 'Leads-mensajes' : this.withGoogleObjectiveSubtype('Leads', value);
     if (normalized.includes('youtube')) return 'Youtube';
     if (normalized.includes('local')) return 'Local campaing';
     if (normalized.includes('perfil')) return 'Visitas al perfil';
     if (normalized.includes('interaccion') || normalized.includes('engagement')) return 'Interaccion';
-    if (normalized.includes('trafico') || normalized.includes('traffic')) return 'Trafico';
+    if (normalized.includes('trafico') || normalized.includes('traffic')) return this.withGoogleObjectiveSubtype('Trafico', value);
     if (normalized.includes('venta') || normalized.includes('sales')) {
-      if (this.hasPmaxSignal(value)) return 'Ventas-PMAX';
-      if (this.hasSearchSignal(value)) return 'Ventas-Search';
-      return 'Ventas';
+      return this.withGoogleObjectiveSubtype('Ventas', value);
     }
     return '';
   }
@@ -417,6 +415,12 @@ export class InvestmentsService {
     return this.normalizeReference(value)
       .replace(/\s+/g, '-')
       .toLowerCase();
+  }
+
+  private withGoogleObjectiveSubtype(objective: 'Leads' | 'Trafico' | 'Ventas', value: string): string {
+    if (this.hasPmaxSignal(value)) return `${objective}-PMAX`;
+    if (this.hasSearchSignal(value)) return `${objective}-Search`;
+    return objective;
   }
 
   private baseObjective(value: string): string {

@@ -37,7 +37,7 @@ const allObjectiveOptions = uniqueValues([
 const GENERAL_VIEW = 'general';
 const viewAsClients: Record<string, string[]> = {
   'florencia@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA', 'PAMPA BAY', 'IMQ'],
-  'francisco@redhookdata.com': ['WORLD SPORT', 'BINDER RULEMANES', 'LP', 'ORMIFLEX', 'RP'],
+  'francisco@redhookdata.com': ['WORLD SPORT', 'BINDER RULEMANES', 'LP', 'ORMIFLEX', 'RP', 'RHD'],
   'franco@redhookdata.com': ['PAMPA BAY', 'IMQ', 'LP', 'ORMIFLEX', 'BINDER RULEMANES', 'RP'],
   'sabrina@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA']
 };
@@ -242,7 +242,7 @@ const sortLabels: Record<SortKey, string> = {
   presupuestoDaily: 'Presupuesto daily',
   nuevoPresupuestoDiario: 'Nuevo presupuesto diario',
   desvio: 'Desvio',
-  consumoDia: 'Consumo dia',
+  consumoDia: 'Consumo ayer',
   resultadosProyectados: 'Resultados proyectados',
   fcProyectada: 'FC proyectada'
 };
@@ -377,6 +377,7 @@ type ControlCurrencyTotal = {
   consumoRestante: number;
   presupuestoDaily: number;
   nuevoPresupuestoDiario: number;
+  consumoDia: number;
 };
 
 function sortCurrencyTotals(totals: CurrencyTotal[]) {
@@ -438,7 +439,8 @@ function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal
       consumo: 0,
       consumoRestante: 0,
       presupuestoDaily: 0,
-      nuevoPresupuestoDiario: 0
+      nuevoPresupuestoDiario: 0,
+      consumoDia: 0
     };
 
     totals.set(line.moneda, {
@@ -447,7 +449,8 @@ function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal
       consumo: current.consumo + line.consumo,
       consumoRestante: current.consumoRestante + line.consumoRestante,
       presupuestoDaily: current.presupuestoDaily + line.presupuestoDaily,
-      nuevoPresupuestoDiario: current.nuevoPresupuestoDiario + line.nuevoPresupuestoDiario
+      nuevoPresupuestoDiario: current.nuevoPresupuestoDiario + line.nuevoPresupuestoDiario,
+      consumoDia: current.consumoDia + line.consumoDia
     });
   });
 
@@ -1339,7 +1342,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       <td className={total.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(total.consumoRestante, total.moneda)}</td>
                       <td>{formatMoney(total.presupuestoDaily, total.moneda)}</td>
                       <td>{formatMoney(total.nuevoPresupuestoDiario, total.moneda)}</td>
-                      <td colSpan={4}></td>
+                      <td></td>
+                      <td>{formatMoney(total.consumoDia, total.moneda)}</td>
+                      <td colSpan={2}></td>
                     </tr>
                   ))}
                 </tfoot>

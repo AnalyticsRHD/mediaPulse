@@ -953,7 +953,10 @@ export class ExternalApisService {
       if (metricDate < startDate || metricDate > endDate) continue;
 
       const mapping = await this.brandMappingService.resolve(resolvedReference);
-      const objetivo = this.inferObjective(adSetName || adGroupName || metricCampaignName);
+      const objectiveSource = range.platform === 'Google'
+        ? [metricCampaignName, adGroupName, adSetName].filter(Boolean).join(' ')
+        : [adSetName, adGroupName, metricCampaignName].filter(Boolean).join(' ');
+      const objetivo = this.inferObjective(objectiveSource);
 
       metrics.push({
         date: metricDate,
@@ -1057,19 +1060,23 @@ export class ExternalApisService {
     if (!normalized) return undefined;
     if (normalized.includes('alcance') || normalized.includes('reach')) return 'Alcance';
     if (normalized.includes('leadsmensajes') || normalized.includes('mensajes')) return 'Leads-mensajes';
-    if (normalized.includes('lead')) return 'Leads';
+    if (normalized.includes('lead')) return this.withGoogleObjectiveSubtype('Leads', value);
     if (normalized.includes('youtube')) return 'Youtube';
     if (normalized.includes('local')) return 'Local campaing';
     if (normalized.includes('visitasalperfil') || normalized.includes('perfil')) return 'Visitas al perfil';
     if (normalized.includes('interaccion') || normalized.includes('engagement')) return 'Interaccion';
-    if (normalized.includes('trafico') || normalized.includes('traffic')) return 'Trafico';
+    if (normalized.includes('trafico') || normalized.includes('traffic')) return this.withGoogleObjectiveSubtype('Trafico', value);
     if (normalized.includes('ventas') || normalized.includes('venta') || normalized.includes('sales') || normalized.includes('purchase') || normalized.includes('compra')) {
-      if (this.hasPmaxSignal(value)) return 'Ventas-PMAX';
-      if (this.hasSearchSignal(value)) return 'Ventas-Search';
-      return 'Ventas';
+      return this.withGoogleObjectiveSubtype('Ventas', value);
     }
 
     return undefined;
+  }
+
+  private withGoogleObjectiveSubtype(objective: 'Leads' | 'Trafico' | 'Ventas', value: string): string {
+    if (this.hasPmaxSignal(value)) return `${objective}-PMAX`;
+    if (this.hasSearchSignal(value)) return `${objective}-Search`;
+    return objective;
   }
 
   private compactText(value: string): string {
