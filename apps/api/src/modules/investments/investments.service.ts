@@ -172,6 +172,8 @@ export class InvestmentsService {
     const share = totalBudget > 0 ? line.presupuesto / totalBudget : 0;
     const porcentajeConsumo = line.presupuesto > 0 ? consumo / line.presupuesto : 0;
     const resultadosProyectados = this.getProjectedResults(line);
+    const remainingBudgetDayEquivalents = this.getRemainingDayEquivalentsFromSync(line.mes, line.lastConsumoUpdatedAt)
+      ?? remainingDayEquivalents;
 
     return {
       line: {
@@ -180,7 +182,7 @@ export class InvestmentsService {
         consumoDia,
         consumoAyer: consumoDia,
         presupuestoDaily: days > 0 ? line.presupuesto / days : 0,
-        nuevoPresupuestoDiario: remainingDayEquivalents > 0 ? (line.presupuesto - consumo) / remainingDayEquivalents : 0,
+        nuevoPresupuestoDiario: remainingBudgetDayEquivalents > 0 ? (line.presupuesto - consumo) / remainingBudgetDayEquivalents : 0,
         share,
         resultadosProyectados,
         fcProyectada: this.isSalesObjective(line.objetivo) ? resultadosProyectados * line.tktPromedio : 0,
@@ -509,6 +511,21 @@ export class InvestmentsService {
   private getRemainingDayEquivalents(mes: string, date: string): number {
     const totalMinutes = this.daysInMonth(mes) * 1440;
     return Math.max((totalMinutes - this.getElapsedMinutes(mes, date)) / 1440, 0);
+  }
+
+  private getRemainingDayEquivalentsFromSync(mes: string, syncedAt?: string | null): number | null {
+    if (!syncedAt) return null;
+
+    const syncDate = new Date(syncedAt);
+    if (Number.isNaN(syncDate.getTime())) return null;
+
+    const [year, month] = mes.split('-').map(Number);
+    const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const nextMonthStart = new Date(year, month, 1, 0, 0, 0, 0);
+    if (syncDate < monthStart) return this.daysInMonth(mes);
+
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    return Math.max((nextMonthStart.getTime() - syncDate.getTime()) / millisecondsPerDay, 0);
   }
 
   private getElapsedMinutes(mes: string, date: string): number {

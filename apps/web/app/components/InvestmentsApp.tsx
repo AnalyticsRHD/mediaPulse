@@ -376,6 +376,7 @@ type ControlCurrencyTotal = {
   consumo: number;
   consumoRestante: number;
   presupuestoDaily: number;
+  nuevoPresupuestoDiario: number;
 };
 
 function sortCurrencyTotals(totals: CurrencyTotal[]) {
@@ -436,7 +437,8 @@ function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal
       presupuesto: 0,
       consumo: 0,
       consumoRestante: 0,
-      presupuestoDaily: 0
+      presupuestoDaily: 0,
+      nuevoPresupuestoDiario: 0
     };
 
     totals.set(line.moneda, {
@@ -444,7 +446,8 @@ function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal
       presupuesto: current.presupuesto + line.presupuesto,
       consumo: current.consumo + line.consumo,
       consumoRestante: current.consumoRestante + line.consumoRestante,
-      presupuestoDaily: current.presupuestoDaily + line.presupuestoDaily
+      presupuestoDaily: current.presupuestoDaily + line.presupuestoDaily,
+      nuevoPresupuestoDiario: current.nuevoPresupuestoDiario + line.nuevoPresupuestoDiario
     });
   });
 
@@ -1335,7 +1338,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       <td>{total.presupuesto > 0 ? `${Math.round((total.consumo / total.presupuesto) * 100)}%` : '0%'}</td>
                       <td className={total.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(total.consumoRestante, total.moneda)}</td>
                       <td>{formatMoney(total.presupuestoDaily, total.moneda)}</td>
-                      <td colSpan={5}></td>
+                      <td>{formatMoney(total.nuevoPresupuestoDiario, total.moneda)}</td>
+                      <td colSpan={4}></td>
                     </tr>
                   ))}
                 </tfoot>
