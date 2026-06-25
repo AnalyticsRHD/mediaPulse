@@ -9,9 +9,6 @@ const investmentStatuses = ['EN_PROCESO', 'PRESUPUESTO_OK'] as const;
 const datePresetOptions = [
   { value: 'thisMonth', label: 'Este mes' },
   { value: 'yesterday', label: 'Ayer' },
-  { value: 'last7', label: 'Ultimos 7 dias' },
-  { value: 'last14', label: 'Ultimos 14 dias' },
-  { value: 'last30', label: 'Ultimos 30 dias' },
   { value: 'previousMonth', label: 'Mes anterior' },
   { value: 'custom', label: 'Personalizado' }
 ] as const;
@@ -58,7 +55,6 @@ type SortKey =
   | 'consumo'
   | 'porcentajeConsumo'
   | 'consumoRestante'
-  | 'presupuestoDaily'
   | 'nuevoPresupuestoDiario'
   | 'desvio'
   | 'consumoDia'
@@ -239,7 +235,6 @@ const sortLabels: Record<SortKey, string> = {
   consumo: 'Consumo',
   porcentajeConsumo: '% Consumo',
   consumoRestante: 'Consumo restante',
-  presupuestoDaily: 'Presupuesto daily',
   nuevoPresupuestoDiario: 'Nuevo presupuesto diario',
   desvio: 'Desvio',
   consumoDia: 'Consumo ayer',
@@ -253,18 +248,6 @@ function getDateRange(preset: DatePreset, customMonth: string) {
   if (preset === 'yesterday') {
     const yesterday = yesterdayDate();
     return { startDate: yesterday, endDate: yesterday };
-  }
-
-  if (preset === 'last7') {
-    return { startDate: addDays(today, -6), endDate: today };
-  }
-
-  if (preset === 'last14') {
-    return { startDate: addDays(today, -13), endDate: today };
-  }
-
-  if (preset === 'last30') {
-    return { startDate: addDays(today, -29), endDate: today };
   }
 
   if (preset === 'previousMonth') {
@@ -375,7 +358,6 @@ type ControlCurrencyTotal = {
   presupuesto: number;
   consumo: number;
   consumoRestante: number;
-  presupuestoDaily: number;
   nuevoPresupuestoDiario: number;
   consumoDia: number;
 };
@@ -438,7 +420,6 @@ function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal
       presupuesto: 0,
       consumo: 0,
       consumoRestante: 0,
-      presupuestoDaily: 0,
       nuevoPresupuestoDiario: 0,
       consumoDia: 0
     };
@@ -448,7 +429,6 @@ function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal
       presupuesto: current.presupuesto + line.presupuesto,
       consumo: current.consumo + line.consumo,
       consumoRestante: current.consumoRestante + line.consumoRestante,
-      presupuestoDaily: current.presupuestoDaily + line.presupuestoDaily,
       nuevoPresupuestoDiario: current.nuevoPresupuestoDiario + line.nuevoPresupuestoDiario,
       consumoDia: current.consumoDia + line.consumoDia
     });
@@ -1317,7 +1297,6 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     <td>{formatMoney(line.consumo, line.moneda)}</td>
                     <td>{Math.round(line.porcentajeConsumo * 100)}%</td>
                     <td className={line.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(line.consumoRestante, line.moneda)}</td>
-                    <td>{formatMoney(line.presupuestoDaily, line.moneda)}</td>
                     <td>{formatMoney(line.nuevoPresupuestoDiario, line.moneda)}</td>
                     <td className={getDeviationClass(line.desvio)}>{Math.round(line.desvio * 100)}%</td>
                     <td>{formatMoney(line.consumoDia, line.moneda)}</td>
@@ -1327,7 +1306,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 ))}
                 {!loading && filteredControlLines.length === 0 ? (
                   <tr>
-                    <td colSpan={16} className="empty">No hay inversiones cargadas para este mes.</td>
+                    <td colSpan={15} className="empty">No hay inversiones cargadas para este mes.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -1340,7 +1319,6 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       <td>{formatMoney(total.consumo, total.moneda)}</td>
                       <td>{total.presupuesto > 0 ? `${Math.round((total.consumo / total.presupuesto) * 100)}%` : '0%'}</td>
                       <td className={total.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(total.consumoRestante, total.moneda)}</td>
-                      <td>{formatMoney(total.presupuestoDaily, total.moneda)}</td>
                       <td>{formatMoney(total.nuevoPresupuestoDiario, total.moneda)}</td>
                       <td></td>
                       <td>{formatMoney(total.consumoDia, total.moneda)}</td>
