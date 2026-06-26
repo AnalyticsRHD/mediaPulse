@@ -37,7 +37,7 @@ const viewAsClients: Record<string, string[]> = {
   'florencia@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA', 'PAMPA BAY', 'IMQ'],
   'francisco@redhookdata.com': ['WORLD SPORT', 'BINDER RULEMANES', 'LP', 'ORMIFLEX', 'RP', 'RHD'],
   'franco@redhookdata.com': ['PAMPA BAY', 'IMQ', 'LP', 'ORMIFLEX', 'BINDER RULEMANES', 'RP'],
-  'sabrina@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA']
+  'sabrina@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA', 'WORLD SPORT']
 };
 const viewAsOptions: SelectOption[] = [
   { label: 'Ver como general', value: GENERAL_VIEW },
