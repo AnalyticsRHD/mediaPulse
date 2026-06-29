@@ -526,7 +526,7 @@ export class InvestmentsService {
     const value = platform.trim().toLowerCase();
     if (value === 'meta' || value === 'facebook ads' || value === 'facebook') return 'META';
     if (value === 'google' || value === 'google ads') return 'Google';
-    if (value === 'merc. libre' || value === 'mercado libre') return 'Merc. Libre';
+    if (value === 'merc. libre' || value === 'mercado libre' || value === 'm.libre' || value === 'meli') return 'MELI';
     if (value === 'tiktok' || value === 'tik tok') return 'TikTok';
     return platform.trim();
   }

@@ -25,7 +25,7 @@ const baseObjectives = [
   'Interaccion'
 ];
 const googleObjectiveSuffixes = ['PMAX', 'Search'];
-const platformOptions = ['META', 'Google', 'Merc. Libre', 'TikTok'];
+const platformOptions = ['META', 'Google', 'MELI', 'TikTok'];
 const allObjectiveOptions = uniqueValues([
   ...baseObjectives,
   ...['Trafico', 'Leads', 'Ventas'].flatMap((objective) => (
@@ -346,7 +346,7 @@ function lineMatchesView(line: InvestmentLine, allowedClients: Set<string> | nul
 
 function formatPlatformLabel(platform: string) {
   const normalized = normalizePlatformName(platform);
-  if (normalized === 'merc-libre' || normalized === 'mercado-libre') return 'M.Libre';
+  if (normalized === 'merc-libre' || normalized === 'mercado-libre' || normalized === 'm-libre' || normalized === 'meli') return 'MELI';
   if (normalized === 'linkedin') return 'LinkedIn';
   if (normalized === 'tiktok' || normalized === 'tik-tok') return 'TikTok';
   return platform;
@@ -354,7 +354,7 @@ function formatPlatformLabel(platform: string) {
 
 function platformClassName(platform: string) {
   const normalized = normalizePlatformName(platform);
-  if (normalized === 'merc-libre' || normalized === 'mercado-libre') return 'platform-merc-libre';
+  if (normalized === 'merc-libre' || normalized === 'mercado-libre' || normalized === 'm-libre' || normalized === 'meli') return 'platform-merc-libre';
   if (normalized === 'tik-tok') return 'platform-tiktok';
   return `platform-${normalized}`;
 }
@@ -465,7 +465,8 @@ function getManualFormSuggestions(lines: ManualHistoryLine[], form: ManualForm):
   matches
     .sort((a, b) => getManualLineRecency(b) - getManualLineRecency(a))
     .forEach((line) => {
-      const key = normalizeTypeaheadText(line.campana || 'sin-campana');
+      const campaign = line.campana?.trim();
+      const key = campaign ? normalizeTypeaheadText(campaign) : line.id;
       if (!latestByCampaign.has(key)) latestByCampaign.set(key, line);
     });
 
@@ -1389,7 +1390,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 <SelectField
                   label="Plataforma"
                   value={form.plataforma}
-                  options={['META', 'Google', 'Merc. Libre', 'TikTok']}
+                  options={['META', 'Google', 'MELI', 'TikTok']}
                   placeholder="Selecciona plataforma"
                   id="manual-plataforma"
                   openSelectId={openSelectId}
