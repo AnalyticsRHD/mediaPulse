@@ -749,6 +749,9 @@ tbody tr:nth-child(even) {
   position: sticky;
   top: 12px;
   width: 100%;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .manual-form-header {
@@ -766,10 +769,47 @@ tbody tr:nth-child(even) {
   padding: 18px;
 }
 
+.manual-form {
+  padding: 14px 14px 16px;
+}
+
+.manual-form::-webkit-scrollbar {
+  width: 8px;
+}
+
+.manual-form::-webkit-scrollbar-thumb {
+  border: 2px solid var(--panel);
+  border-radius: 999px;
+  background: #c7d0d0;
+}
+
+.manual-form h2 {
+  font-size: 19px;
+}
+
 .form-grid {
   display: grid;
   gap: 12px;
   margin: 18px 0;
+}
+
+.manual-form .form-grid {
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.manual-form .field {
+  gap: 4px;
+}
+
+.manual-form .field span {
+  font-size: 11px;
+}
+
+.manual-form .field input,
+.manual-form .custom-select-trigger,
+.manual-form .month-picker-trigger {
+  min-height: 36px;
 }
 
 .form-suggestion {
@@ -1807,6 +1847,7 @@ tfoot td {
 
   .manual-form {
     position: static;
+    max-height: min(720px, calc(100vh - 36px));
   }
 
   .preview-header {

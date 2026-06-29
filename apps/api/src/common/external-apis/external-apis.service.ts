@@ -254,6 +254,7 @@ export class ExternalApisService {
         adSetName: item.adSetName,
         objetivo: this.inferObjective(item.campaignName || item.adSetName),
         granularity: scope,
+        coverageEndDate: scope === 'monthly' ? endDate : undefined,
         spend: this.round2(item.spend),
         impressions: item.impressions,
         clicks: item.clicks,
@@ -436,6 +437,7 @@ export class ExternalApisService {
         campaignName: item.campaignName || item.accountName,
         objetivo: this.inferObjective(item.campaignName),
         granularity: scope,
+        coverageEndDate: scope === 'monthly' ? endDate : undefined,
         spend: this.round2(item.spend),
         impressions: item.impressions,
         clicks: item.clicks,
@@ -633,6 +635,7 @@ export class ExternalApisService {
           campaignName: value.campaignName,
           objetivo: value.objetivo,
           granularity: scope,
+          coverageEndDate: scope === 'monthly' ? endDate : undefined,
           spend: this.round2(value.spend),
           impressions: 0,
           clicks: 0,
@@ -1224,6 +1227,7 @@ export class ExternalApisService {
         adGroupName,
         objetivo,
         granularity: scope,
+        coverageEndDate: scope === 'monthly' ? this.resolveMetricCoverageEndDate(record, dateRangeType, forcedDate) : undefined,
         spend: this.numberValue(this.firstValue(record, ['cost', 'amountspent', 'amount_spent', 'spend'])),
         impressions: this.numberValue(this.firstValue(record, ['impressions'])),
         clicks: this.numberValue(this.firstValue(record, ['clicks'])),
@@ -1368,6 +1372,7 @@ export class ExternalApisService {
         adGroupName,
         objetivo,
         granularity: scope,
+        coverageEndDate: scope === 'monthly' ? date : undefined,
         spend: this.round2(spend),
         impressions: 0,
         clicks: 0,
@@ -1618,6 +1623,19 @@ export class ExternalApisService {
     if (month) {
       const year = this.today().slice(0, 4);
       return `${year}-${String(Number(month)).padStart(2, '0')}-01`;
+    }
+
+    return this.today();
+  }
+
+  private resolveMetricCoverageEndDate(record: Record<string, any>, dateRangeType?: string, forcedDate?: string): string {
+    if (forcedDate) return forcedDate;
+
+    const explicitEndDate = this.firstValue(record, ['end_date', 'date_to', 'enddate']);
+    if (explicitEndDate) return this.normalizeDate(explicitEndDate);
+
+    if (dateRangeType === 'yesterday') {
+      return this.previousDate(this.today());
     }
 
     return this.today();

@@ -172,7 +172,6 @@ export class MetricsService {
     };
 
     this.syncStatuses.set(key, status);
-    if (!error) await this.persistConsumptionSyncAt(status.finishedAt);
     return status;
   }
 
@@ -181,16 +180,6 @@ export class MetricsService {
       return await this.manualInvestmentsRepository.findLatestConsumptionSyncAt();
     } catch {
       return null;
-    }
-  }
-
-  private async persistConsumptionSyncAt(syncedAt: string | null): Promise<void> {
-    if (!syncedAt) return;
-
-    try {
-      await this.manualInvestmentsRepository.markConsumptionSyncAt(syncedAt);
-    } catch {
-      return undefined;
     }
   }
 }

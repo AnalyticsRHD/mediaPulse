@@ -1212,7 +1212,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
           Control
         </button>
         <button className={activeTab === 'manual' ? 'active' : ''} onClick={() => router.push('/carga-manual')}>
-          Carga manual
+         Forecast
         </button>
       </nav>
 
@@ -1386,7 +1386,6 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                   onOpenSelect={setOpenSelectId}
                   onChange={(value) => setForm({ ...form, marca: value })}
                 />
-                <SelectField label="Moneda" value={form.moneda} options={[...currencies]} placeholder="Selecciona moneda" id="manual-moneda" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, moneda: value as InvestmentCurrency | '' })} />
                 <SelectField
                   label="Plataforma"
                   value={form.plataforma}
@@ -1404,6 +1403,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     setForm({ ...form, plataforma: value, objetivo: options.includes(form.objetivo) ? form.objetivo : options[0] });
                   }}
                 />
+                <SelectField label="Moneda" value={form.moneda} options={[...currencies]} placeholder="Selecciona moneda" id="manual-moneda" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, moneda: value as InvestmentCurrency | '' })} />
                 <SelectField label="Objetivo" value={form.objetivo} options={objectiveOptions} placeholder="Selecciona objetivo" id="manual-objetivo" openSelectId={openSelectId} onOpenSelect={setOpenSelectId} onChange={(value) => setForm({ ...form, objetivo: value })} />
                 <Field label="Campaña" value={form.campana} required={false} onChange={(value) => setForm({ ...form, campana: value })} />
                 <Field label="Presupuesto" type="number" value={form.presupuesto} onChange={(value) => setForm({ ...form, presupuesto: value })} />
