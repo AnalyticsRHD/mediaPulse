@@ -300,6 +300,12 @@ function getConsumptionSyncDate(preset: DatePreset, range: DateRange) {
   return range.endDate;
 }
 
+function getConsumoDiaLabel(preset: DatePreset) {
+  if (preset === 'today' || preset === 'thisMonth') return 'Consumo hoy';
+  if (preset === 'yesterday') return 'Consumo ayer';
+  return 'Consumo dia';
+}
+
 const integer = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 });
 
 function formatMoney(value: number, moneda: InvestmentCurrency = 'CHL') {
@@ -1399,7 +1405,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                   {Object.entries(sortLabels).map(([key, label]) => (
                     <SortHeader
                       key={key}
-                      label={label}
+                      label={key === 'consumoDia' ? getConsumoDiaLabel(datePreset) : label}
                       sortKey={key as SortKey}
                       currentSort={controlSort}
                       onChange={setControlSort}
@@ -1672,7 +1678,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       })}
                     </div>
                   ) : null}
-                  <table>
+                  <div className="forecast-table-wrap">
+                    <table>
                     <thead>
                       <tr>
                         <th>Marca</th>
@@ -1681,12 +1688,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <th>Campaña</th>
                         <th>Moneda</th>
                         <th>Presupuesto</th>
-                        <th>Costo x resultado</th>
-                        <th>TKT prom</th>
                         <th>Share</th>
+                        <th>Costo x resultado</th>
                         <th>Resultado proyectado</th>
+                        <th>TKT prom</th>
                         <th>FC proyectada</th>
-                        <th></th>
+                        <th className="forecast-actions-header"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1785,6 +1792,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                               />
                             ) : formatMoney(line.presupuesto, line.moneda)}
                           </td>
+                          <td>{groupShares.get(line.id) ?? 0}%</td>
                           <td>
                             {editingLineId === line.id && lineDraft ? (
                               <input
@@ -1795,6 +1803,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                               />
                             ) : formatMoney(line.costoPorResultado, line.moneda)}
                           </td>
+                          <td>{integer.format(line.resultadosProyectados)}</td>
                           <td>
                             {editingLineId === line.id && lineDraft ? (
                               <input
@@ -1805,8 +1814,6 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                               />
                             ) : formatMoney(line.tktPromedio, line.moneda)}
                           </td>
-                          <td>{groupShares.get(line.id) ?? 0}%</td>
-                          <td>{integer.format(line.resultadosProyectados)}</td>
                           <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
                           <td className="actions-cell">
                             {canEditManualPreview && editingLineId === line.id ? (
@@ -1844,7 +1851,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           <td></td>
                           <td></td>
                           <td>{formatCurrencyTotals(item.totals, 'fcProyectada')}</td>
-                          <td></td>
+                          <td className="forecast-actions-footer"></td>
                         </tr>
                       ))}
                       {clientTotals.map((item) => (
@@ -1860,11 +1867,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           <td></td>
                           <td></td>
                           <td>{formatCurrencyTotals(item.totals, 'fcProyectada')}</td>
-                          <td></td>
+                          <td className="forecast-actions-footer"></td>
                         </tr>
                       ))}
                     </tfoot>
-                  </table>
+                    </table>
+                  </div>
                 </section>
               );
             })}

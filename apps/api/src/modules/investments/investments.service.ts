@@ -300,7 +300,7 @@ export class InvestmentsService {
   }
 
   private getConsumoDiaDate(mode: InvestmentRangeMode, endDate: string): string {
-    return mode === 'thisMonth' ? this.previousDate(endDate) : endDate;
+    return endDate;
   }
 
   private getDailyConsumptionSnapshot(line: ManualInvestmentLine, date: string, useFallback: boolean): {
