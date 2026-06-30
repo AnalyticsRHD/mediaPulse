@@ -141,39 +141,16 @@ export class MetricsController {
     @Query('source') source: AdsMetricsSource | 'all' = 'all',
     @Query('date') date?: string
   ) {
-    await this.metricsService.markSyncStarted('consumption');
-    const targetDate = date || this.today();
-    const monthlyDate = targetDate;
-    const dailyDate = targetDate;
-    const previousDailyDate = this.previousDate(targetDate);
-    const sources = source === 'all' ? this.getAllAdsSources() : [source];
+    return this.metricsService.syncMonthlyAndDaily(source, date);
+  }
 
-    try {
-      const results = await Promise.all(
-        sources.flatMap((currentSource) => [
-          this.safeSyncAdsSource(currentSource, 'monthly', monthlyDate),
-          this.safeSyncAdsSource(currentSource, 'daily', dailyDate),
-          this.safeSyncAdsSource(currentSource, 'daily', previousDailyDate)
-        ])
-      );
-      const response = {
-        date: targetDate,
-        monthlyDate,
-        dailyDate,
-        previousDailyDate,
-        totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
-        results
-      };
-      const syncStatus = await this.metricsService.markSyncFinished('consumption', response);
-
-      return {
-        ...response,
-        syncStatus
-      };
-    } catch (error) {
-      await this.metricsService.markSyncFinished('consumption', { totalSynced: 0 }, error);
-      throw error;
-    }
+  @Post('sync/date-range')
+  async syncDateRange(
+    @Query('source') source: AdsMetricsSource | 'all' = 'all',
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string
+  ) {
+    return this.metricsService.syncDateRange(source, startDate, endDate);
   }
 
   private async syncSupermetricsSource(source: SupermetricsSource, scope: SupermetricsScope, date?: string) {

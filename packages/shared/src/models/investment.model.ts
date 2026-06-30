@@ -24,6 +24,8 @@ export interface ManualInvestmentLine {
   mes: string;
   lastConsumo?: number;
   lastConsumoDia?: number;
+  lastConsumoHoy?: number;
+  lastConsumoHoyDate?: string | null;
   lastConsumoUpdatedAt?: string | null;
   createdAt?: string;
   updatedAt?: string | null;

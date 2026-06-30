@@ -1,7 +1,8 @@
-import { ConflictException, ForbiddenException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { createHash, timingSafeEqual } from 'crypto';
 import jwt, { SignOptions } from 'jsonwebtoken';
 import { ConfigService } from '../../config/config.service';
+import { MetricsService } from '../metrics/metrics.service';
 import { AuthRepository } from './auth.repository';
 import { AuthUser } from './auth.types';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -15,9 +16,12 @@ type JwtPayload = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly authRepository: AuthRepository,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly metricsService: MetricsService
   ) {}
 
   async login(email: string, password: string): Promise<{ token: string; user: AuthUser }> {
@@ -33,6 +37,7 @@ export class AuthService {
       role: user.role
     };
     const token = this.signToken(authUser);
+    this.syncConsumptionAfterLogin(authUser);
 
     return {
       token,
@@ -103,6 +108,17 @@ export class AuthService {
         expiresIn: this.configService.jwtExpiresIn as SignOptions['expiresIn']
       }
     );
+  }
+
+  private syncConsumptionAfterLogin(user: AuthUser): void {
+    void this.metricsService.syncMonthlyAndDaily('all')
+      .then((result) => {
+        this.logger.log(`Consumption sync after login for ${user.email}: ${result.totalSynced} rows`);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Consumption sync after login failed for ${user.email}: ${message}`);
+      });
   }
 
   private matchesPassword(password: string, storedHash: string): boolean {

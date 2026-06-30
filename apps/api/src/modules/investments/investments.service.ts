@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, forwardRef, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { InvestmentCurrency, InvestmentLine, InvestmentStatus, InvestmentsResponse, ManualInvestmentLine } from '@mediapulse/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { MetricsService } from '../metrics/metrics.service';
@@ -9,7 +9,7 @@ import { AuthUser } from '../auth/auth.types';
 
 const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
-type InvestmentRangeMode = 'thisMonth' | 'yesterday' | 'previousMonth' | 'custom';
+type InvestmentRangeMode = 'thisMonth' | 'today' | 'yesterday' | 'previousMonth' | 'custom';
 
 @Injectable()
 export class InvestmentsService {
@@ -17,6 +17,7 @@ export class InvestmentsService {
   private manualLinesHydrated = false;
 
   constructor(
+    @Inject(forwardRef(() => MetricsService))
     private readonly metricsService: MetricsService,
     private readonly brandMappingService: BrandMappingService,
     private readonly manualInvestmentsRepository: ManualInvestmentsRepository
@@ -41,9 +42,13 @@ export class InvestmentsService {
       throw new BadRequestException('startDate must be before or equal to endDate');
     }
     const days = this.daysInMonth(resolvedMes);
+    const selectedDays = this.getRangeDays(rangeStartDate, rangeEndDate);
+    const displayDays = rangeMode === 'custom' ? selectedDays : days;
     const diasRestantes = this.getRemainingDays(resolvedMes, rangeEndDate);
     const remainingDayEquivalents = this.getRemainingDayEquivalents(resolvedMes, rangeEndDate);
-    const ritmo = days > 0 ? this.getElapsedDayEquivalents(resolvedMes, rangeEndDate) / days : 0;
+    const ritmo = days > 0
+      ? this.getRangeDayEquivalents(resolvedMes, rangeStartDate, rangeEndDate, rangeMode) / days
+      : 0;
     const latestConsumptionUpdatedAt = await this.getLatestConsumptionUpdatedAt();
     const lines = Array.from(this.manualLines.values())
       .filter((line) => line.mes === resolvedMes)
@@ -61,7 +66,7 @@ export class InvestmentsService {
         date: rangeEndDate,
         startDate: rangeStartDate,
         endDate: rangeEndDate,
-        dias: days,
+        dias: displayDays,
         diasRestantes,
         ritmo,
         presupuestoPlanificado: totalBudget,
@@ -71,6 +76,13 @@ export class InvestmentsService {
       },
       lines: investmentLines
     };
+  }
+
+  async refreshConsumptionSnapshots(date = this.formatOperationalDate(new Date())): Promise<void> {
+    const month = this.ensureMonth(date.slice(0, 7), 'mes');
+    const startDate = `${month}-01`;
+
+    await this.findAll(month, date, startDate, date, true, 'thisMonth');
   }
 
   async createManualLine(dto: ManualInvestmentDto, user?: AuthUser): Promise<ManualInvestmentLine> {
@@ -91,6 +103,8 @@ export class InvestmentsService {
       campana: this.cleanOptionalText(dto.campana),
       lastConsumo: 0,
       lastConsumoDia: 0,
+      lastConsumoHoy: 0,
+      lastConsumoHoyDate: null,
       lastConsumoUpdatedAt: null,
       plataforma: this.normalizePlatform(dto.plataforma)
     };
@@ -222,7 +236,7 @@ export class InvestmentsService {
     const consumoDiaSnapshot = this.getDailyConsumptionSnapshot(
       line,
       this.getConsumoDiaDate(mode, endDate),
-      true
+      mode !== 'today'
     );
     const consumoDia = consumoDiaSnapshot.consumo;
     const isSingleDayRange = startDate === endDate;
@@ -233,6 +247,19 @@ export class InvestmentsService {
         consumoDia,
         hasMonthlyMetrics: false,
         hasDailyMetrics: consumoDiaSnapshot.hasMetrics
+      };
+    }
+
+    if (mode === 'custom') {
+      const rangeSnapshot = this.getDateRangeConsumptionSnapshot(line, startDate, endDate);
+      const consumo = rangeSnapshot.hasMetrics
+        ? rangeSnapshot.consumo
+        : this.getMonthlyRangeFallback(line, startDate, endDate, monthlyBaseMetrics);
+      return {
+        consumo,
+        consumoDia,
+        hasMonthlyMetrics: false,
+        hasDailyMetrics: rangeSnapshot.hasMetrics || consumoDiaSnapshot.hasMetrics
       };
     }
 
@@ -277,12 +304,32 @@ export class InvestmentsService {
 
     const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, date, date);
     if (dailyBaseMetrics.length === 0) {
+      if (line.lastConsumoHoyDate === date) {
+        return { consumo: line.lastConsumoHoy || 0, hasMetrics: useFallback };
+      }
       return { consumo: useFallback ? line.lastConsumoDia || 0 : 0, hasMetrics: false };
     }
     const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics);
     return {
       consumo: this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1),
       hasMetrics: true
+    };
+  }
+
+  private getTodayConsumptionSnapshot(line: ManualInvestmentLine): Pick<ManualInvestmentLine, 'lastConsumoHoy' | 'lastConsumoHoyDate'> {
+    const today = this.formatOperationalDate(new Date());
+    const snapshot = this.getDailyConsumptionSnapshot(line, today, false);
+
+    if (!snapshot.hasMetrics) {
+      return {
+        lastConsumoHoy: line.lastConsumoHoy || 0,
+        lastConsumoHoyDate: line.lastConsumoHoyDate || null
+      };
+    }
+
+    return {
+      lastConsumoHoy: snapshot.consumo,
+      lastConsumoHoyDate: today
     };
   }
 
@@ -319,11 +366,40 @@ export class InvestmentsService {
   }
 
   private getDateRangeConsumption(line: ManualInvestmentLine, startDate: string, endDate: string): number {
+    return this.getDateRangeConsumptionSnapshot(line, startDate, endDate).consumo;
+  }
+
+  private getDateRangeConsumptionSnapshot(line: ManualInvestmentLine, startDate: string, endDate: string): {
+    consumo: number;
+    hasMetrics: boolean;
+  } {
     const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, startDate, endDate);
     const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics);
     return dailyBaseMetrics.length > 0
-      ? this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1)
-      : line.lastConsumoDia || 0;
+      ? {
+        consumo: this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1),
+        hasMetrics: true
+      }
+      : { consumo: 0, hasMetrics: false };
+  }
+
+  private getMonthlyRangeFallback(
+    line: ManualInvestmentLine,
+    startDate: string,
+    endDate: string,
+    monthlyBaseMetrics: Array<{ objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string; spend: number; coverageEndDate?: string }>
+  ): number {
+    const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
+    const monthlyConsumo = monthlyBaseMetrics.length > 0
+      ? this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1)
+      : line.lastConsumo || 0;
+    if (!monthlyConsumo) return 0;
+
+    const rangeDayEquivalents = this.getRangeDayEquivalents(line.mes, startDate, endDate, 'custom');
+    const monthDayEquivalents = this.daysInMonth(line.mes);
+    return monthDayEquivalents > 0
+      ? monthlyConsumo * Math.min(rangeDayEquivalents / monthDayEquivalents, 1)
+      : 0;
   }
 
   private getDailyMetricBaseCandidates(line: ManualInvestmentLine, startDate: string, endDate: string) {
@@ -586,6 +662,23 @@ export class InvestmentsService {
     return this.getElapsedMinutes(mes, date) / 1440;
   }
 
+  private getRangeDayEquivalents(mes: string, startDate: string, endDate: string, mode: InvestmentRangeMode): number {
+    if (mode !== 'custom') return this.getElapsedDayEquivalents(mes, endDate);
+    if (!startDate.startsWith(mes) || !endDate.startsWith(mes)) return 0;
+
+    const startDay = Math.min(Math.max(Number(startDate.slice(8, 10)), 1), this.daysInMonth(mes));
+    const startElapsedMinutes = Math.max(startDay - 1, 0) * 1440;
+    return Math.max(this.getElapsedMinutes(mes, endDate) - startElapsedMinutes, 0) / 1440;
+  }
+
+  private getRangeDays(startDate: string, endDate: string): number {
+    const start = new Date(`${startDate}T00:00:00.000Z`);
+    const end = new Date(`${endDate}T00:00:00.000Z`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+
+    return Math.max(Math.floor((end.getTime() - start.getTime()) / MILLISECONDS_PER_DAY) + 1, 0);
+  }
+
   private getRemainingDayEquivalents(mes: string, date: string): number {
     if (date < `${mes}-01`) return this.daysInMonth(mes);
     if (date >= `${mes}-${String(this.daysInMonth(mes)).padStart(2, '0')}`) return 0;
@@ -731,7 +824,7 @@ export class InvestmentsService {
   }
 
   private ensureRangeMode(value: InvestmentRangeMode | undefined): InvestmentRangeMode {
-    if (value && ['thisMonth', 'yesterday', 'previousMonth', 'custom'].includes(value)) return value;
+    if (value && ['thisMonth', 'today', 'yesterday', 'previousMonth', 'custom'].includes(value)) return value;
     return 'thisMonth';
   }
 
@@ -793,12 +886,15 @@ export class InvestmentsService {
         ...builtLine.sourceLine,
         lastConsumo: builtLine.hasMonthlyMetrics ? builtLine.line.consumo : builtLine.sourceLine.lastConsumo || 0,
         lastConsumoDia: builtLine.hasDailyMetrics ? builtLine.line.consumoDia : builtLine.sourceLine.lastConsumoDia || 0,
+        ...this.getTodayConsumptionSnapshot(builtLine.sourceLine),
         lastConsumoUpdatedAt: now
       };
 
       if (
         nextLine.lastConsumo === (builtLine.sourceLine.lastConsumo || 0)
         && nextLine.lastConsumoDia === (builtLine.sourceLine.lastConsumoDia || 0)
+        && nextLine.lastConsumoHoy === (builtLine.sourceLine.lastConsumoHoy || 0)
+        && nextLine.lastConsumoHoyDate === (builtLine.sourceLine.lastConsumoHoyDate || null)
       ) {
         return;
       }
@@ -807,6 +903,8 @@ export class InvestmentsService {
         await this.manualInvestmentsRepository.updateConsumptionSnapshot(nextLine.id, {
           lastConsumo: nextLine.lastConsumo || 0,
           lastConsumoDia: nextLine.lastConsumoDia || 0,
+          lastConsumoHoy: nextLine.lastConsumoHoy || 0,
+          lastConsumoHoyDate: nextLine.lastConsumoHoyDate || null,
           lastConsumoUpdatedAt: nextLine.lastConsumoUpdatedAt || now
         });
         this.manualLines.set(nextLine.id, nextLine);

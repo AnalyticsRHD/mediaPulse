@@ -15,14 +15,6 @@ if (fs.existsSync(workspaceEnvPath)) {
 export class ConfigService {
   private readonly dbConfig = createDbConfig();
 
-  get airtableApiKey(): string {
-    return process.env.AIRTABLE_API_KEY || '';
-  }
-
-  get airtableBaseId(): string {
-    return process.env.AIRTABLE_BASE_ID || '';
-  }
-
   get metaAccessToken(): string {
     return this.cleanPlaceholder(process.env.META_ACCESS_TOKEN || '');
   }

@@ -320,11 +320,6 @@ h2 {
   min-width: 260px;
 }
 
-.custom-range {
-  display: flex;
-  gap: 10px;
-}
-
 .range-pill {
   min-height: 40px;
   display: inline-flex;
@@ -1206,6 +1201,30 @@ tbody tr:nth-child(even) {
   color: #185f25;
 }
 
+.status-badge {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.status-badge.yellow {
+  background: #fff5cc;
+  border-color: #e8b931;
+  color: #6f5200;
+}
+
+.status-badge.green {
+  background: #dcf4d2;
+  border-color: #63b85b;
+  color: #185f25;
+}
+
 .status-option {
   min-height: 28px;
   display: flex;
@@ -1592,6 +1611,107 @@ tbody tr:nth-child(even) {
   padding: 0 12px;
 }
 
+.range-trigger {
+  cursor: pointer;
+  min-width: 168px;
+}
+
+.date-range-picker {
+  position: relative;
+}
+
+.range-calendar {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  width: 292px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
+  padding: 14px;
+}
+
+.range-calendar-head {
+  display: grid;
+  grid-template-columns: 32px 1fr 32px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.range-calendar-head strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 900;
+  text-align: center;
+  text-transform: capitalize;
+}
+
+.range-calendar-head button {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.range-calendar-head button:hover {
+  background: #eef2f7;
+}
+
+.range-weekdays,
+.range-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.range-weekdays span {
+  color: #9aa3b2;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.range-days {
+  margin-top: 8px;
+}
+
+.range-day {
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #fff;
+  color: #2b115c;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.range-day.empty {
+  cursor: default;
+}
+
+.range-day.in-range {
+  background: #eee7fb;
+}
+
+.range-day.selected {
+  border-color: #5b21b6;
+  background: #2b115c;
+  color: #fff;
+}
+
+.range-day:not(.empty):hover {
+  border-color: #5b21b6;
+}
+
 tfoot td {
   background: var(--accent);
   color: #fff;
@@ -1834,10 +1954,19 @@ tfoot td {
     justify-items: stretch;
   }
 
-  .date-range-control,
-  .custom-range {
+  .date-range-control {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .date-range-picker,
+  .range-trigger {
+    width: 100%;
+  }
+
+  .range-calendar {
+    left: 0;
+    right: auto;
   }
 
   .summary-strip,

@@ -48,6 +48,8 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         mes char(7) NOT NULL,
         last_consumo numeric NOT NULL DEFAULT 0,
         last_consumo_dia numeric NOT NULL DEFAULT 0,
+        last_consumo_hoy numeric NOT NULL DEFAULT 0,
+        last_consumo_hoy_date date NULL,
         last_consumo_updated_at timestamptz NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(),
@@ -61,6 +63,8 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         ADD COLUMN IF NOT EXISTS campana text NULL,
         ADD COLUMN IF NOT EXISTS last_consumo numeric NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS last_consumo_dia numeric NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS last_consumo_hoy numeric NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS last_consumo_hoy_date date NULL,
         ADD COLUMN IF NOT EXISTS last_consumo_updated_at timestamptz NULL;
 
       CREATE TABLE IF NOT EXISTS manual_investment_logs (
@@ -100,6 +104,8 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         mes,
         last_consumo,
         last_consumo_dia,
+        last_consumo_hoy,
+        last_consumo_hoy_date,
         last_consumo_updated_at,
         created_at,
         updated_at,
@@ -132,9 +138,11 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
           mes,
           last_consumo,
           last_consumo_dia,
+          last_consumo_hoy,
+          last_consumo_hoy_date,
           last_consumo_updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         ON CONFLICT (id) DO UPDATE SET
           anunciante = EXCLUDED.anunciante,
           marca = EXCLUDED.marca,
@@ -149,6 +157,8 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
           mes = EXCLUDED.mes,
           last_consumo = EXCLUDED.last_consumo,
           last_consumo_dia = EXCLUDED.last_consumo_dia,
+          last_consumo_hoy = EXCLUDED.last_consumo_hoy,
+          last_consumo_hoy_date = EXCLUDED.last_consumo_hoy_date,
           last_consumo_updated_at = EXCLUDED.last_consumo_updated_at,
           updated_at = now();
       `,
@@ -167,6 +177,8 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         line.mes,
         line.lastConsumo || 0,
         line.lastConsumoDia || 0,
+        line.lastConsumoHoy || 0,
+        line.lastConsumoHoyDate || null,
         line.lastConsumoUpdatedAt || null
       ]
     );
@@ -176,7 +188,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
 
   async updateConsumptionSnapshot(
     id: string,
-    snapshot: { lastConsumo: number; lastConsumoDia: number; lastConsumoUpdatedAt: string }
+    snapshot: { lastConsumo: number; lastConsumoDia: number; lastConsumoHoy: number; lastConsumoHoyDate: string | null; lastConsumoUpdatedAt: string }
   ): Promise<boolean> {
     if (!(await this.init()) || !this.pool) return false;
 
@@ -186,11 +198,13 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         SET
           last_consumo = $2,
           last_consumo_dia = $3,
-          last_consumo_updated_at = $4
+          last_consumo_hoy = $4,
+          last_consumo_hoy_date = $5,
+          last_consumo_updated_at = $6
         WHERE id = $1
           AND deleted_at IS NULL;
       `,
-      [id, snapshot.lastConsumo, snapshot.lastConsumoDia, snapshot.lastConsumoUpdatedAt]
+      [id, snapshot.lastConsumo, snapshot.lastConsumoDia, snapshot.lastConsumoHoy, snapshot.lastConsumoHoyDate, snapshot.lastConsumoUpdatedAt]
     );
 
     return true;
@@ -283,10 +297,21 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       mes: String(row.mes),
       lastConsumo: Number(row.last_consumo || 0),
       lastConsumoDia: Number(row.last_consumo_dia || 0),
+      lastConsumoHoy: Number(row.last_consumo_hoy || 0),
+      lastConsumoHoyDate: this.toDateOnly(row.last_consumo_hoy_date),
       lastConsumoUpdatedAt: row.last_consumo_updated_at ? new Date(String(row.last_consumo_updated_at)).toISOString() : null,
       createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : undefined,
       updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null,
       deletedAt: row.deleted_at ? new Date(String(row.deleted_at)).toISOString() : null
     };
+  }
+
+  private toDateOnly(value: unknown): string | null {
+    if (!value) return null;
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    const text = String(value);
+    if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
   }
 }

@@ -231,7 +231,6 @@ El sistema corre automáticamente a las **6 AM (zona horaria ARG)** diariamente:
 - Obtiene métricas de Meta
 - Obtiene métricas de Google
 - Upsert en base local
-- Sincroniza con Airtable (si está configurado)
 
 Para activar manualmente, crear endpoint:
 ```bash
@@ -261,8 +260,6 @@ cp .env.example .env
 ```
 
 **Requeridas:**
-- `AIRTABLE_API_KEY` - Tu personal access token de Airtable
-- `AIRTABLE_BASE_ID` - ID de tu base Airtable
 - `META_ACCESS_TOKEN` - Token de acceso Meta (opcional si no usas Meta)
 - `GOOGLE_ACCESS_TOKEN` - Token de acceso Google (opcional si no usas Google)
 
@@ -280,5 +277,4 @@ cp .env.example .env
   - 🟢 si |desvioPacing| <= 15%
   - 🟡 si |desvioPacing| <= 30%
   - 🔴 si |desvioPacing| > 30%
-- Si Airtable no está configurado, el sistema funciona en modo local (memory) sin sincronización
 

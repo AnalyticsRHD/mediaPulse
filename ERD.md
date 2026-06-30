@@ -9,7 +9,7 @@ erDiagram
     FORECAST_DETAIL ||--o{ DAILY_METRICS : "colecciona"
 
     CLIENT {
-      string id PK "Registro único (Airtable record ID)"
+      string id PK "Registro unico"
       string name
     }
     MONTHLY_CONTROL {

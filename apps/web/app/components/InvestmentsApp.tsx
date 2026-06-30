@@ -9,6 +9,7 @@ const currencies = ['ARS', 'CHL', 'USD'] as const;
 const investmentStatuses = ['EN_PROCESO', 'PRESUPUESTO_OK'] as const;
 const datePresetOptions = [
   { value: 'thisMonth', label: 'Este mes' },
+  { value: 'today', label: 'Hoy' },
   { value: 'yesterday', label: 'Ayer' },
   { value: 'previousMonth', label: 'Mes anterior' },
   { value: 'custom', label: 'Personalizado' }
@@ -48,6 +49,7 @@ type InvestmentCurrency = typeof currencies[number];
 type InvestmentStatus = typeof investmentStatuses[number];
 type DatePreset = typeof datePresetOptions[number]['value'];
 type DateRange = { startDate: string; endDate: string };
+type CustomDateRange = DateRange;
 type ControlFilterKey = 'anunciante' | 'marca' | 'moneda' | 'plataforma' | 'objetivo';
 type ControlFilters = Record<ControlFilterKey, string>;
 type SortDirection = 'asc' | 'desc';
@@ -249,8 +251,12 @@ const sortLabels: Record<SortKey, string> = {
   fcProyectada: 'FC proyectada'
 };
 
-function getDateRange(preset: DatePreset, customMonth: string) {
+function getDateRange(preset: DatePreset, customRange: CustomDateRange) {
   const today = todayDate();
+
+  if (preset === 'today') {
+    return { startDate: today, endDate: today };
+  }
 
   if (preset === 'yesterday') {
     const yesterday = yesterdayDate();
@@ -263,8 +269,7 @@ function getDateRange(preset: DatePreset, customMonth: string) {
   }
 
   if (preset === 'custom') {
-    const selectedMonth = customMonth || today.slice(0, 7);
-    return monthRange(selectedMonth);
+    return customRange;
   }
 
   return { startDate: monthStart(today), endDate: today };
@@ -461,16 +466,7 @@ function getManualFormSuggestions(lines: ManualHistoryLine[], form: ManualForm):
     && normalizePlatformName(line.plataforma) === platform
   ));
 
-  const latestByCampaign = new Map<string, ManualHistoryLine>();
-  matches
-    .sort((a, b) => getManualLineRecency(b) - getManualLineRecency(a))
-    .forEach((line) => {
-      const campaign = line.campana?.trim();
-      const key = campaign ? normalizeTypeaheadText(campaign) : line.id;
-      if (!latestByCampaign.has(key)) latestByCampaign.set(key, line);
-    });
-
-  return Array.from(latestByCampaign.values());
+  return matches.sort((a, b) => getManualLineRecency(b) - getManualLineRecency(a));
 }
 
 function getCampaignSuggestionLabel(line: ManualHistoryLine) {
@@ -527,9 +523,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
   const [datePreset, setDatePreset] = useState<DatePreset>('thisMonth');
-  const [customMonth, setCustomMonth] = useState(currentDate.slice(0, 7));
+  const [customRange, setCustomRange] = useState<CustomDateRange>(() => monthRange(currentDate.slice(0, 7)));
   const [previewMonth, setPreviewMonth] = useState(currentDate.slice(0, 7));
   const [syncing, setSyncing] = useState(false);
+  const [consumptionSyncStatus, setConsumptionSyncStatus] = useState<MetricsSyncStatus | null>(null);
   const [lastConsumptionSyncAt, setLastConsumptionSyncAt] = useState('');
   const [previousValuesOpen, setPreviousValuesOpen] = useState(false);
   const [brandClients, setBrandClients] = useState<string[]>([]);
@@ -553,8 +550,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const canManageManualLines = authUser?.role === 'ADMIN' || authUser?.role === 'MEDIA';
 
   const selectedRange = useMemo(
-    () => getDateRange(datePreset, customMonth),
-    [datePreset, customMonth]
+    () => getDateRange(datePreset, customRange),
+    [datePreset, customRange]
   );
   const viewAllowedClients = useMemo(() => getViewAllowedClients(viewAs), [viewAs]);
   const clients = useMemo(
@@ -643,6 +640,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const manualPreviewMonthLabel = formatMonthLabel(previewMonth);
   const manualPreviewMonthFinished = isFinishedMonth(previewMonth);
   const canEditManualPreview = canManageManualLines && !manualPreviewMonthFinished;
+  const syncRunning = syncing || consumptionSyncStatus?.status === 'running';
 
   async function requestJson<T>(url: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
     const headers = new Headers(options?.headers);
@@ -711,7 +709,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
   async function loadConsumptionSyncStatus() {
     const status = await requestJson<MetricsSyncStatus>(`${API_BASE}/metrics/sync/status?key=consumption`, { cache: 'no-store' });
+    setConsumptionSyncStatus(status);
     setLastConsumptionSyncAt(status.finishedAt || status.startedAt || '');
+    return status;
   }
 
   async function loadManualPreview(month = previewMonth) {
@@ -775,6 +775,26 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     if (!authToken) return;
     loadConsumptionSyncStatus().catch(() => undefined);
   }, [authToken]);
+
+  useEffect(() => {
+    if (!authToken || consumptionSyncStatus?.status !== 'running') return;
+
+    let cancelled = false;
+    const interval = window.setInterval(async () => {
+      try {
+        const status = await loadConsumptionSyncStatus();
+        if (cancelled || status.status === 'running') return;
+        await loadInvestments(getDateRange(datePreset, customRange), datePreset);
+      } catch {
+        return undefined;
+      }
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [authToken, consumptionSyncStatus?.status, datePreset, customRange, selectedRange.startDate, selectedRange.endDate]);
 
   useEffect(() => {
     if (!authToken) return;
@@ -887,17 +907,22 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   }, []);
 
   async function syncSupermetrics() {
+    if (syncRunning) return;
     setSyncing(true);
     try {
       setErrorMessage('');
       const syncDate = getConsumptionSyncDate(datePreset, selectedRange);
-      const response = await requestJson<MetricsSyncResponse>(`${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${syncDate}`, {
+      const syncUrl = datePreset === 'custom'
+        ? `${API_BASE}/metrics/sync/date-range?source=all&startDate=${selectedRange.startDate}&endDate=${selectedRange.endDate}`
+        : `${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${syncDate}`;
+      const response = await requestJson<MetricsSyncResponse>(syncUrl, {
         method: 'POST',
-        timeoutMs: 90000
+        timeoutMs: 180000
       });
+      if (response.syncStatus) setConsumptionSyncStatus(response.syncStatus);
       const syncedAt = response.syncStatus?.finishedAt || response.syncStatus?.startedAt || '';
       if (syncedAt) setLastConsumptionSyncAt(syncedAt);
-      await loadInvestments(getDateRange(datePreset, customMonth), datePreset);
+      await loadInvestments(getDateRange(datePreset, customRange), datePreset);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo actualizar consumo');
     } finally {
@@ -939,7 +964,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
         ...defaultForm,
         mes: current.mes
       }));
-      await loadInvestments(getDateRange(datePreset, customMonth), datePreset);
+      await loadInvestments(getDateRange(datePreset, customRange), datePreset);
       await loadManualPreview();
       await loadManualHistory();
     } catch (error) {
@@ -1191,14 +1216,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
             <DateRangeControl
               preset={datePreset}
               range={selectedRange}
-              customMonth={customMonth}
+              customRange={customRange}
               openSelectId={openSelectId}
               onOpenSelect={setOpenSelectId}
               onPresetChange={setDatePreset}
-              onCustomMonthChange={setCustomMonth}
+              onCustomRangeChange={setCustomRange}
             />
-            <button className="sync-button" type="button" onClick={syncSupermetrics} disabled={syncing}>
-              {syncing ? 'Sincronizando...' : 'Actualizar consumo'}
+            <button className="sync-button" type="button" onClick={syncSupermetrics} disabled={syncRunning}>
+              {syncRunning ? 'Sincronizando...' : 'Actualizar consumo'}
             </button>
             <div className="user-pill">
               <button type="button" onClick={handleLogout}>Salir</button>
@@ -1502,7 +1527,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           openSelectId={openSelectId}
                           onOpenSelect={setOpenSelectId}
                         />
-                      ) : null}
+                      ) : (
+                        <StatusBadge value={groupStatus} />
+                      )}
                     </div>
                     {canEditManualPreview ? (
                       <div className="preview-title-actions">
@@ -1924,19 +1951,19 @@ function MetricWithCurrencyFilter({
 function DateRangeControl({
   preset,
   range,
-  customMonth,
+  customRange,
   openSelectId,
   onOpenSelect,
   onPresetChange,
-  onCustomMonthChange
+  onCustomRangeChange
 }: {
   preset: DatePreset;
   range: { startDate: string; endDate: string };
-  customMonth: string;
+  customRange: CustomDateRange;
   openSelectId: string | null;
   onOpenSelect: (id: string | null) => void;
   onPresetChange: (preset: DatePreset) => void;
-  onCustomMonthChange: (month: string) => void;
+  onCustomRangeChange: (range: CustomDateRange) => void;
 }) {
   return (
     <div className="date-range-control">
@@ -1953,21 +1980,134 @@ function DateRangeControl({
         />
       </label>
       {preset === 'custom' ? (
-        <div className="custom-range">
-          <MonthField
-            label="Mes"
-            value={customMonth}
-            id="range-month"
-            openSelectId={openSelectId}
-            onOpenSelect={onOpenSelect}
-            onChange={onCustomMonthChange}
-          />
-        </div>
+        <DateRangePicker
+          id="range-calendar"
+          range={customRange}
+          openSelectId={openSelectId}
+          onOpenSelect={onOpenSelect}
+          onChange={onCustomRangeChange}
+        />
       ) : (
         <span className="range-pill">{range.startDate} / {range.endDate}</span>
       )}
     </div>
   );
+}
+
+const weekdayLabels = ['DOM', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB'];
+
+function DateRangePicker({
+  id,
+  range,
+  openSelectId,
+  onOpenSelect,
+  onChange
+}: {
+  id: string;
+  range: CustomDateRange;
+  openSelectId: string | null;
+  onOpenSelect: (id: string | null) => void;
+  onChange: (range: CustomDateRange) => void;
+}) {
+  const isOpen = openSelectId === id;
+  const [visibleMonth, setVisibleMonth] = useState(range.startDate.slice(0, 7));
+  const [draftStart, setDraftStart] = useState(range.startDate);
+  const [draftEnd, setDraftEnd] = useState(range.endDate);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setVisibleMonth(range.startDate.slice(0, 7));
+    setDraftStart(range.startDate);
+    setDraftEnd(range.endDate);
+  }, [isOpen]);
+
+  const days = getCalendarDays(visibleMonth);
+  const monthLabel = formatMonthLabel(visibleMonth);
+
+  function selectDate(date: string) {
+    if (!draftStart || (draftStart && draftEnd)) {
+      setDraftStart(date);
+      setDraftEnd('');
+      onChange({ startDate: date, endDate: date });
+      return;
+    }
+
+    const nextRange = date < draftStart
+      ? { startDate: date, endDate: draftStart }
+      : { startDate: draftStart, endDate: date };
+    setDraftStart(nextRange.startDate);
+    setDraftEnd(nextRange.endDate);
+    onChange(nextRange);
+  }
+
+  return (
+    <div className="date-range-picker" data-dropdown-root="true">
+      <button
+        className="range-pill range-trigger"
+        type="button"
+        onClick={() => onOpenSelect(isOpen ? null : id)}
+        aria-expanded={isOpen}
+      >
+        {range.startDate} / {range.endDate}
+      </button>
+      {isOpen ? (
+        <div className="range-calendar">
+          <div className="range-calendar-head">
+            <button type="button" onClick={() => setVisibleMonth((month) => shiftMonth(month, -1))} aria-label="Mes anterior">
+              &lt;
+            </button>
+            <strong>{monthLabel}</strong>
+            <button type="button" onClick={() => setVisibleMonth((month) => shiftMonth(month, 1))} aria-label="Mes siguiente">
+              &gt;
+            </button>
+          </div>
+          <div className="range-weekdays">
+            {weekdayLabels.map((label) => <span key={label}>{label}</span>)}
+          </div>
+          <div className="range-days">
+            {days.map((day, index) => {
+              if (!day) return <span key={`empty-${index}`} className="range-day empty" />;
+              const inRange = draftStart && draftEnd && day.date >= draftStart && day.date <= draftEnd;
+              const selected = day.date === draftStart || day.date === draftEnd;
+
+              return (
+                <button
+                  key={day.date}
+                  className={`range-day ${inRange ? 'in-range' : ''} ${selected ? 'selected' : ''}`}
+                  type="button"
+                  onClick={() => selectDate(day.date)}
+                >
+                  {day.day}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function getCalendarDays(month: string): Array<{ date: string; day: number } | null> {
+  const firstDate = `${month}-01`;
+  const first = new Date(`${firstDate}T00:00:00.000Z`);
+  const totalDays = Number(monthEnd(firstDate).slice(8, 10));
+  const blanks = Array.from({ length: first.getUTCDay() }, () => null);
+  const days = Array.from({ length: totalDays }, (_, index) => {
+    const day = index + 1;
+    return {
+      date: `${month}-${String(day).padStart(2, '0')}`,
+      day
+    };
+  });
+
+  return [...blanks, ...days];
+}
+
+function shiftMonth(month: string, amount: number) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const value = new Date(Date.UTC(year, monthNumber - 1 + amount, 1));
+  return value.toISOString().slice(0, 7);
 }
 
 function FilterHeader({
@@ -2162,6 +2302,14 @@ function StatusToggle({
         Confirmado
       </label>
     </div>
+  );
+}
+
+function StatusBadge({ value }: { value: InvestmentStatus }) {
+  return (
+    <span className={`status-badge ${value === 'PRESUPUESTO_OK' ? 'green' : 'yellow'}`}>
+      {value === 'PRESUPUESTO_OK' ? 'Confirmado' : 'En proceso'}
+    </span>
   );
 }
 

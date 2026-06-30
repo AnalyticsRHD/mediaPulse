@@ -5,7 +5,6 @@ import { ForecastModule } from './modules/forecast/forecast.module';
 import { ControlModule } from './modules/control/control.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
 import { ConfigModule } from './config/config.module';
-import { AirtableModule } from './common/airtable/airtable.module';
 import { ExternalApisModule } from './common/external-apis/external-apis.module';
 import { IngestionsSchedulerModule } from './common/ingestionsScheduler/ingestionsScheduler.module';
 import { InvestmentsModule } from './modules/investments/investments.module';
@@ -17,7 +16,6 @@ import { AuthModule } from './modules/auth/auth.module';
     ConfigModule,
     AuthModule,
     BrandMappingModule,
-    AirtableModule,
     ExternalApisModule,
     IngestionsSchedulerModule,
     ForecastModule,
