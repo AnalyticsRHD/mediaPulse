@@ -453,6 +453,45 @@ function getClientTotals(lines: InvestmentLine[]) {
     .sort((a, b) => a.cliente.localeCompare(b.cliente));
 }
 
+function getRoundedGroupShares(groupLines: InvestmentLine[]) {
+  const shares = new Map<string, number>();
+  const byCurrency = new Map<InvestmentCurrency, InvestmentLine[]>();
+
+  groupLines.forEach((line) => {
+    byCurrency.set(line.moneda, [...(byCurrency.get(line.moneda) ?? []), line]);
+  });
+
+  byCurrency.forEach((lines) => {
+    const total = lines.reduce((sum, line) => sum + line.presupuesto, 0);
+    if (total <= 0) {
+      lines.forEach((line) => shares.set(line.id, 0));
+      return;
+    }
+
+    const parts = lines.map((line) => {
+      const exact = (line.presupuesto / total) * 100;
+      return {
+        id: line.id,
+        roundedDown: Math.floor(exact),
+        remainder: exact - Math.floor(exact)
+      };
+    });
+    const missing = 100 - parts.reduce((sum, part) => sum + part.roundedDown, 0);
+    const bonusIds = new Set(
+      [...parts]
+        .sort((a, b) => b.remainder - a.remainder)
+        .slice(0, missing)
+        .map((part) => part.id)
+    );
+
+    parts.forEach((part) => {
+      shares.set(part.id, part.roundedDown + (bonusIds.has(part.id) ? 1 : 0));
+    });
+  });
+
+  return shares;
+}
+
 function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal[] {
   const totals = new Map<InvestmentCurrency, ControlCurrencyTotal>();
 
@@ -1559,6 +1598,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 ? 'PRESUPUESTO_OK'
                 : 'EN_PROCESO';
               const groupCurrencies = uniqueValues(group.lines.map((line) => line.moneda));
+              const groupShares = getRoundedGroupShares(group.lines);
               return (
                 <section className="preview-block" key={group.key}>
                   <div className="preview-title">
@@ -1765,7 +1805,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                               />
                             ) : formatMoney(line.tktPromedio, line.moneda)}
                           </td>
-                          <td>{Math.round(line.share * 100)}%</td>
+                          <td>{groupShares.get(line.id) ?? 0}%</td>
                           <td>{integer.format(line.resultadosProyectados)}</td>
                           <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
                           <td className="actions-cell">
