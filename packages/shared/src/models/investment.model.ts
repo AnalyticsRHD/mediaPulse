@@ -32,6 +32,21 @@ export interface ManualInvestmentLine {
   deletedAt?: string | null;
 }
 
+export type ManualInvestmentLogAction = 'CREATED' | 'UPDATED' | 'DELETED';
+
+export interface ManualInvestmentLog {
+  id: string;
+  action: ManualInvestmentLogAction;
+  userId: string | null;
+  userName: string;
+  manualInvestmentLineId: string;
+  manualInvestmentLineAnunciante: string;
+  manualInvestmentLineSnapshot: ManualInvestmentLine;
+  createdAt: string;
+  updatedAt: string | null;
+  deletedAt: string | null;
+}
+
 export interface InvestmentLine extends ManualInvestmentLine {
   consumo: number;
   consumoDia: number;

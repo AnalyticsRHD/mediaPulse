@@ -27,6 +27,14 @@ export class InvestmentsController {
     return this.investmentsService.getManualLines(mes);
   }
 
+  @Get('manual/:id/history')
+  async getManualLineHistory(@Param('id') id: string, @Headers('authorization') authorization?: string) {
+    await this.authService.requireUser(authorization);
+    const history = await this.investmentsService.getManualLineHistory(id);
+    if (!history) throw new NotFoundException('Manual investment line not found');
+    return history;
+  }
+
   @Post('manual')
   async createManualLine(@Body() dto: ManualInvestmentDto, @Headers('authorization') authorization?: string) {
     const user = await this.authService.requireManualEditor(authorization);

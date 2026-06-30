@@ -1,5 +1,5 @@
 import { BadRequestException, forwardRef, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
-import { InvestmentCurrency, InvestmentLine, InvestmentStatus, InvestmentsResponse, ManualInvestmentLine } from '@mediapulse/shared';
+import { InvestmentCurrency, InvestmentLine, InvestmentStatus, InvestmentsResponse, ManualInvestmentLine, ManualInvestmentLog } from '@mediapulse/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { MetricsService } from '../metrics/metrics.service';
 import { ManualInvestmentDto } from './dto/manual-investment.dto';
@@ -173,6 +173,15 @@ export class InvestmentsService {
     const lines = Array.from(this.manualLines.values());
     const filtered = mes ? lines.filter((line) => line.mes === mes) : lines;
     return filtered.sort((a, b) => this.sortManualLines(a, b));
+  }
+
+  async getManualLineHistory(id: string): Promise<ManualInvestmentLog[] | null> {
+    await this.hydrateManualLines();
+    const existsInCurrentLines = this.manualLines.has(id);
+    const history = await this.manualInvestmentsRepository.findLogsByLineId(id);
+
+    if (!existsInCurrentLines && history.length === 0) return null;
+    return history;
   }
 
   private toInvestmentLine(

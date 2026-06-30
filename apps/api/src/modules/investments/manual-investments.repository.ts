@@ -1,5 +1,5 @@
 import { Injectable, OnApplicationShutdown } from '@nestjs/common';
-import { InvestmentCurrency, InvestmentStatus, ManualInvestmentLine } from '@mediapulse/shared';
+import { InvestmentCurrency, InvestmentStatus, ManualInvestmentLine, ManualInvestmentLog } from '@mediapulse/shared';
 import { Pool } from 'pg';
 import { ConfigService } from '../../config/config.service';
 import { AuthUser } from '../auth/auth.types';
@@ -277,6 +277,32 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
     return true;
   }
 
+  async findLogsByLineId(lineId: string): Promise<ManualInvestmentLog[]> {
+    if (!(await this.init()) || !this.pool) return [];
+
+    const result = await this.pool.query(
+      `
+        SELECT
+          id,
+          action,
+          user_id,
+          user_name,
+          manual_investment_line_id,
+          manual_investment_line_anunciante,
+          manual_investment_line_snapshot,
+          created_at,
+          updated_at,
+          deleted_at
+        FROM manual_investment_logs
+        WHERE manual_investment_line_id = $1
+        ORDER BY created_at DESC;
+      `,
+      [lineId]
+    );
+
+    return result.rows.map((row) => this.toManualLog(row));
+  }
+
   async onApplicationShutdown(): Promise<void> {
     await this.pool?.end();
   }
@@ -304,6 +330,32 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null,
       deletedAt: row.deleted_at ? new Date(String(row.deleted_at)).toISOString() : null
     };
+  }
+
+  private toManualLog(row: Record<string, unknown>): ManualInvestmentLog {
+    return {
+      id: String(row.id),
+      action: String(row.action) as ManualInvestmentLogAction,
+      userId: row.user_id ? String(row.user_id) : null,
+      userName: String(row.user_name || 'Sistema'),
+      manualInvestmentLineId: String(row.manual_investment_line_id),
+      manualInvestmentLineAnunciante: String(row.manual_investment_line_anunciante),
+      manualInvestmentLineSnapshot: this.toManualSnapshot(row.manual_investment_line_snapshot),
+      createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : new Date().toISOString(),
+      updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null,
+      deletedAt: row.deleted_at ? new Date(String(row.deleted_at)).toISOString() : null
+    };
+  }
+
+  private toManualSnapshot(value: unknown): ManualInvestmentLine {
+    try {
+      const snapshot = typeof value === 'string' ? JSON.parse(value) : value;
+      if (snapshot && typeof snapshot === 'object') return snapshot as ManualInvestmentLine;
+    } catch {
+      return {} as ManualInvestmentLine;
+    }
+
+    return {} as ManualInvestmentLine;
   }
 
   private toDateOnly(value: unknown): string | null {

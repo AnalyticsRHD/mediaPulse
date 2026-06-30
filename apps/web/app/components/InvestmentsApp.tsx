@@ -168,6 +168,21 @@ type ManualHistoryLine = Omit<ManualForm, 'moneda' | 'presupuesto' | 'costoPorRe
   updatedAt?: string | null;
 };
 
+type ManualInvestmentLogAction = 'CREATED' | 'UPDATED' | 'DELETED';
+
+type ManualInvestmentLog = {
+  id: string;
+  action: ManualInvestmentLogAction;
+  userId: string | null;
+  userName: string;
+  manualInvestmentLineId: string;
+  manualInvestmentLineAnunciante: string;
+  manualInvestmentLineSnapshot: ManualHistoryLine;
+  createdAt: string;
+  updatedAt: string | null;
+  deletedAt: string | null;
+};
+
 function yesterdayDate() {
   return addDays(todayDate(), -1);
 }
@@ -314,6 +329,16 @@ function formatLastUpdate(value: string) {
     dateStyle: 'short',
     timeStyle: 'short'
   }).format(date);
+}
+
+function getManualLogActionLabel(action: ManualInvestmentLogAction) {
+  const labels: Record<ManualInvestmentLogAction, string> = {
+    CREATED: 'Creacion',
+    UPDATED: 'Actualizacion',
+    DELETED: 'Eliminacion'
+  };
+
+  return labels[action] ?? action;
 }
 
 function getObjectiveOptions(platform: string) {
@@ -529,6 +554,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const [consumptionSyncStatus, setConsumptionSyncStatus] = useState<MetricsSyncStatus | null>(null);
   const [lastConsumptionSyncAt, setLastConsumptionSyncAt] = useState('');
   const [previousValuesOpen, setPreviousValuesOpen] = useState(false);
+  const [historyModalLine, setHistoryModalLine] = useState<InvestmentLine | null>(null);
+  const [lineHistory, setLineHistory] = useState<ManualInvestmentLog[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [brandClients, setBrandClients] = useState<string[]>([]);
   const [brandCatalog, setBrandCatalog] = useState<Record<string, string[]>>({});
   const [viewAs, setViewAs] = useState(GENERAL_VIEW);
@@ -731,6 +759,23 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       setManualHistory(payload);
     } catch {
       setManualHistory([]);
+    }
+  }
+
+  async function openLineHistory(line: InvestmentLine) {
+    setHistoryModalLine(line);
+    setLineHistory([]);
+    setHistoryLoading(true);
+    setErrorMessage('');
+
+    try {
+      const payload = await requestJson<ManualInvestmentLog[]>(`${API_BASE}/investments/manual/${line.id}/history`, { cache: 'no-store' });
+      setLineHistory(payload);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudo cargar el historial de la linea');
+      setLineHistory([]);
+    } finally {
+      setHistoryLoading(false);
     }
   }
 
@@ -1321,6 +1366,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       onChange={setControlSort}
                     />
                   ))}
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -1341,11 +1387,16 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     <td>{formatMoney(line.consumoDia, line.moneda)}</td>
                     <td>{integer.format(line.resultadosProyectados)}</td>
                     <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
+                    <td className="actions-cell">
+                      <button className="icon-button" type="button" onClick={() => openLineHistory(line)} aria-label="Ver historial de linea">
+                        <EyeIcon />
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {!loading && filteredControlLines.length === 0 ? (
                   <tr>
-                    <td colSpan={15} className="empty">No hay inversiones cargadas para este mes.</td>
+                    <td colSpan={16} className="empty">No hay inversiones cargadas para este mes.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -1361,7 +1412,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       <td>{formatMoney(total.nuevoPresupuestoDiario, total.moneda)}</td>
                       <td></td>
                       <td>{formatMoney(total.consumoDia, total.moneda)}</td>
-                      <td colSpan={2}></td>
+                      <td colSpan={3}></td>
                     </tr>
                   ))}
                 </tfoot>
@@ -1595,7 +1646,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <th>Share</th>
                         <th>Resultado proyectado</th>
                         <th>FC proyectada</th>
-                        {canEditManualPreview ? <th></th> : null}
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1717,17 +1768,24 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           <td>{Math.round(line.share * 100)}%</td>
                           <td>{integer.format(line.resultadosProyectados)}</td>
                           <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
-                          <td className="actions-cell" hidden={!canEditManualPreview}>
+                          <td className="actions-cell">
                             {canEditManualPreview && editingLineId === line.id ? (
                               <div className="inline-actions">
-                                <button className="icon-button confirm" type="button" onClick={() => saveLine(line)} aria-label="Guardar linea">✓</button>
+                                <button className="icon-button confirm" type="button" onClick={() => saveLine(line)} aria-label="Guardar linea">OK</button>
                                 <button className="icon-button" type="button" onClick={() => setEditingLineId(null)} aria-label="Cancelar edicion">X</button>
                               </div>
-                            ) : canEditManualPreview ? (
-                              <button className="icon-button" type="button" onClick={() => startLineEdit(line)} aria-label="Editar linea" disabled={deleteMode}>
-                                <img src="/assets/edit.svg" alt="" aria-hidden="true" />
-                              </button>
-                            ) : null}
+                            ) : (
+                              <div className="inline-actions">
+                                <button className="icon-button" type="button" onClick={() => openLineHistory(line)} aria-label="Ver historial de linea">
+                                  <EyeIcon />
+                                </button>
+                                {canEditManualPreview ? (
+                                  <button className="icon-button" type="button" onClick={() => startLineEdit(line)} aria-label="Editar linea" disabled={deleteMode}>
+                                    <img src="/assets/edit.svg" alt="" aria-hidden="true" />
+                                  </button>
+                                ) : null}
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1746,7 +1804,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           <td></td>
                           <td></td>
                           <td>{formatCurrencyTotals(item.totals, 'fcProyectada')}</td>
-                          <td hidden={!canEditManualPreview}></td>
+                          <td></td>
                         </tr>
                       ))}
                       {clientTotals.map((item) => (
@@ -1762,7 +1820,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                           <td></td>
                           <td></td>
                           <td>{formatCurrencyTotals(item.totals, 'fcProyectada')}</td>
-                          <td hidden={!canEditManualPreview}></td>
+                          <td></td>
                         </tr>
                       ))}
                     </tfoot>
@@ -1851,7 +1909,91 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
           </div>
         </div>
       ) : null}
+
+      {historyModalLine ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="line-history-modal" role="dialog" aria-modal="true" aria-labelledby="line-history-title">
+            <div className="previous-values-header">
+              <div>
+                <span>Historial</span>
+                <h2 id="line-history-title">{historyModalLine.marca ?? historyModalLine.anunciante}</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setHistoryModalLine(null)} aria-label="Cerrar historial">
+                X
+              </button>
+            </div>
+            <p>
+              {historyModalLine.anunciante} / {historyModalLine.plataforma} / {historyModalLine.objetivo}
+            </p>
+            <dl className="history-line-summary">
+              <div>
+                <dt>Campana</dt>
+                <dd>{historyModalLine.campana || '-'}</dd>
+              </div>
+              <div>
+                <dt>Moneda</dt>
+                <dd>{historyModalLine.moneda}</dd>
+              </div>
+              <div>
+                <dt>Presupuesto</dt>
+                <dd>{formatMoney(historyModalLine.presupuesto, historyModalLine.moneda)}</dd>
+              </div>
+              <div>
+                <dt>Costo x resultado</dt>
+                <dd>{formatMoney(historyModalLine.costoPorResultado, historyModalLine.moneda)}</dd>
+              </div>
+              <div>
+                <dt>TKT prom</dt>
+                <dd>{formatMoney(historyModalLine.tktPromedio, historyModalLine.moneda)}</dd>
+              </div>
+              <div>
+                <dt>Status actual</dt>
+                <dd>{historyModalLine.status === 'PRESUPUESTO_OK' ? 'Confirmado' : 'En proceso'}</dd>
+              </div>
+            </dl>
+            {historyLoading ? (
+              <div className="history-empty">Cargando historial...</div>
+            ) : lineHistory.length === 0 ? (
+              <div className="history-empty">Esta linea todavia no tiene movimientos registrados.</div>
+            ) : (
+              <div className="history-table-wrap">
+                <table className="history-table">
+                  <thead>
+                    <tr>
+                      <th>Evento</th>
+                      <th>Fecha</th>
+                      <th>Usuario</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineHistory.map((entry) => (
+                      <tr key={entry.id}>
+                        <td>
+                          <span className={`history-action ${entry.action.toLowerCase()}`}>
+                            {getManualLogActionLabel(entry.action)}
+                          </span>
+                        </td>
+                        <td>{formatLastUpdate(entry.createdAt)}</td>
+                        <td>{entry.userName}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </main>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg className="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M2.4 12s3.4-6.2 9.6-6.2 9.6 6.2 9.6 6.2-3.4 6.2-9.6 6.2S2.4 12 2.4 12Z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </svg>
   );
 }
 
