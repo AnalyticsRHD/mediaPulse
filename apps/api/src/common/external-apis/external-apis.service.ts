@@ -280,10 +280,6 @@ export class ExternalApisService {
         'adset_id',
         'adset_name',
         'spend',
-        'impressions',
-        'clicks',
-        'actions',
-        'action_values',
         'date_start',
         'date_stop'
       ].join(','),
@@ -515,15 +511,11 @@ export class ExternalApisService {
         customer.descriptive_name,
         campaign.id,
         campaign.name,
-        metrics.cost_micros,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.conversions,
-        metrics.conversions_value
+        metrics.cost_micros
       FROM campaign
       WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
         AND campaign.status != 'REMOVED'
-        AND metrics.impressions > 0
+        AND metrics.cost_micros > 0
     `.replace(/\s+/g, ' ').trim();
   }
 
@@ -1071,7 +1063,7 @@ export class ExternalApisService {
         params: {
           date_from: startDate,
           date_to: endDate,
-          metrics: 'cost,spend,investment,clicks,prints,impressions'
+          metrics: 'cost,spend,investment'
         },
         timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
       }

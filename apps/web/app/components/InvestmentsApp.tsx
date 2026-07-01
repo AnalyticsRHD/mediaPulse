@@ -1002,7 +1002,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     try {
       setErrorMessage('');
       const syncDate = getConsumptionSyncDate(datePreset, selectedRange);
-      const syncUrl = datePreset === 'custom'
+      const syncUrl = datePreset === 'custom' || datePreset === 'previousMonth'
         ? `${API_BASE}/metrics/sync/date-range?source=all&startDate=${selectedRange.startDate}&endDate=${selectedRange.endDate}`
         : `${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${syncDate}`;
       const response = await requestJson<MetricsSyncResponse>(syncUrl, {

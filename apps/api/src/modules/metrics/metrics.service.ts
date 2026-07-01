@@ -196,23 +196,24 @@ export class MetricsService {
     await this.markSyncStarted('consumption');
     const targetDate = date || this.today();
     const monthlyDate = targetDate;
-    const dailyDate = targetDate;
-    const previousDailyDate = this.previousDate(targetDate);
+    const dailyDates = this.isPastMonthDate(targetDate)
+      ? this.dateRange(this.monthStart(targetDate), targetDate)
+      : [targetDate, this.previousDate(targetDate)];
     const sources = source === 'all' ? this.getAllAdsSources() : [source];
 
     try {
       const results = await Promise.all(
         sources.flatMap((currentSource) => [
           this.safeSyncAdsSource(currentSource, 'monthly', monthlyDate),
-          this.safeSyncAdsSource(currentSource, 'daily', dailyDate),
-          this.safeSyncAdsSource(currentSource, 'daily', previousDailyDate)
+          ...dailyDates.map((dailyDate) => this.safeSyncAdsSource(currentSource, 'daily', dailyDate))
         ])
       );
       const response = {
         date: targetDate,
         monthlyDate,
-        dailyDate,
-        previousDailyDate,
+        dailyDate: targetDate,
+        previousDailyDate: this.previousDate(targetDate),
+        dailyDates,
         totalSynced: results.reduce((sum, result) => sum + result.synced, 0),
         results
       };
@@ -297,8 +298,7 @@ export class MetricsService {
       source: `supermetrics-${source}`,
       scope,
       date: date || this.today(),
-      synced: metrics.length,
-      metrics
+      synced: metrics.length
     };
   }
 
@@ -318,8 +318,7 @@ export class MetricsService {
       source,
       scope,
       date: date || this.today(),
-      synced: metrics.length,
-      metrics
+      synced: metrics.length
     };
   }
 
@@ -345,13 +344,12 @@ export class MetricsService {
         date: date || this.today(),
         synced: 0,
         status: 'failed',
-        error: message,
-        metrics: []
+        error: message
       };
     }
   }
 
-  private async withTimeout<T extends { source: string; scope: SupermetricsScope; date: string; synced: number; metrics: any[] }>(
+  private async withTimeout<T extends { source: string; scope: SupermetricsScope; date: string; synced: number }>(
     promise: Promise<T>,
     timeoutMs: number
   ): Promise<T> {
@@ -382,6 +380,14 @@ export class MetricsService {
     const value = new Date(`${date}T00:00:00.000Z`);
     value.setUTCDate(value.getUTCDate() - 1);
     return value.toISOString().slice(0, 10);
+  }
+
+  private monthStart(date: string): string {
+    return `${date.slice(0, 7)}-01`;
+  }
+
+  private isPastMonthDate(date: string): boolean {
+    return date.slice(0, 7) < this.today().slice(0, 7);
   }
 
   private dateRange(startDate: string, endDate: string): string[] {
