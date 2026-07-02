@@ -343,6 +343,36 @@ function formatDayDecimal(value: number) {
   }).format(value);
 }
 
+function getOperationalTimeParts() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: OPERATIONAL_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(new Date());
+  const getPart = (type: string) => Number(parts.find((part) => part.type === type)?.value || 0);
+
+  return {
+    hour: getPart('hour'),
+    minute: getPart('minute'),
+    second: getPart('second')
+  };
+}
+
+function getSummaryRemainingDays(summary: InvestmentResponse['summary'] | undefined) {
+  if (!summary) return 0;
+  if (typeof summary.diasRestantesExactos === 'number') return summary.diasRestantesExactos;
+  if (summary.date !== todayDate() || !summary.date.startsWith(summary.mes)) return summary.diasRestantes;
+
+  const day = Number(summary.date.slice(8, 10));
+  const days = Number(monthEnd(`${summary.mes}-01`).slice(8, 10));
+  const now = getOperationalTimeParts();
+  const elapsedToday = ((now.hour * 3600) + (now.minute * 60) + now.second) / (24 * 60 * 60);
+
+  return Math.max(days - ((day - 1) + elapsedToday), 0);
+}
+
 function formatLastUpdate(value: string) {
   if (!value) return '-';
   const date = new Date(value);
@@ -1392,15 +1422,6 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     onChange={(value) => setControlFilters((current) => ({ ...current, marca: value }))}
                   />
                   <FilterHeader
-                    filterKey="moneda"
-                    label="Moneda"
-                    value={controlFilters.moneda}
-                    options={controlFilterOptions.moneda}
-                    openFilter={openControlFilter}
-                    onToggle={setOpenControlFilter}
-                    onChange={(value) => setControlFilters((current) => ({ ...current, moneda: value }))}
-                  />
-                  <FilterHeader
                     filterKey="plataforma"
                     label="Plataforma"
                     value={controlFilters.plataforma}
@@ -1437,7 +1458,6 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                   <tr key={line.id}>
                     <td>{line.anunciante}</td>
                     <td>{line.marca ?? '-'}</td>
-                    <td>{line.moneda}</td>
                     <td><span className={`platform ${platformClassName(line.plataforma)}`}>{formatPlatformLabel(line.plataforma)}</span></td>
                     <td>{line.objetivo}</td>
                     <td>{line.campana || '-'}</td>
@@ -1459,7 +1479,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 ))}
                 {!loading && filteredControlLines.length === 0 ? (
                   <tr>
-                    <td colSpan={16} className="empty">No hay inversiones cargadas para este mes.</td>
+                    <td colSpan={15} className="empty">No hay inversiones cargadas para este mes.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -1467,7 +1487,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 <tfoot className="control-totals">
                   {controlCurrencyTotals.map((total) => (
                     <tr key={total.moneda}>
-                      <td colSpan={6}>Gran total {total.moneda}</td>
+                      <td colSpan={5}>Gran total {total.moneda}</td>
                       <td>{formatMoney(total.presupuesto, total.moneda)}</td>
                       <td>{formatMoney(total.consumo, total.moneda)}</td>
                       <td>{total.presupuesto > 0 ? `${Math.round((total.consumo / total.presupuesto) * 100)}%` : '0%'}</td>
@@ -2091,7 +2111,7 @@ function SummaryStrip({
       <DaysMetric
         loading={loading}
         days={summary?.dias ?? 0}
-        remainingDays={summary?.diasRestantesExactos ?? summary?.diasRestantes ?? 0}
+        remainingDays={getSummaryRemainingDays(summary)}
       />
       <Metric label="Ritmo" value={`${Math.round((summary?.ritmo ?? 0) * 100)}%`} />
       <MetricWithCurrencyFilter
