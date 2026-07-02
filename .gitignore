@@ -5,3 +5,4 @@ dist
 **/*.log
 coverage
 .next
+apps/api/data/mercado-libre-oauth.json

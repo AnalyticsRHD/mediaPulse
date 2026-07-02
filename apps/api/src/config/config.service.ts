@@ -169,6 +169,22 @@ export class ConfigService {
     return this.cleanPlaceholder(process.env.MERCADO_LIBRE_ACCESS_TOKEN || '');
   }
 
+  get mercadoLibreRefreshToken(): string {
+    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_REFRESH_TOKEN || '');
+  }
+
+  get mercadoLibreClientId(): string {
+    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_CLIENT_ID || process.env.MERCADO_LIBRE_APP_ID || '');
+  }
+
+  get mercadoLibreClientSecret(): string {
+    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_CLIENT_SECRET || process.env.MERCADO_LIBRE_SECRET_KEY || '');
+  }
+
+  get mercadoLibreOAuthStatePath(): string {
+    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_OAUTH_STATE_PATH || 'apps/api/data/mercado-libre-oauth.json');
+  }
+
   get mercadoLibreAdvertiserIds(): string[] {
     return (process.env.MERCADO_LIBRE_ADVERTISER_IDS || '')
       .split(',')

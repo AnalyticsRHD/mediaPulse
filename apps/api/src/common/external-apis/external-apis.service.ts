@@ -1,5 +1,7 @@
 import { BadGatewayException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
-import axios from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
+import { promises as fs } from 'fs';
+import path from 'path';
 import { ConfigService } from '../../config/config.service';
 import { DailyMetrics } from '@mediapulse/shared';
 import { BrandMappingService } from '../brand-mapping/brand-mapping.service';
@@ -39,10 +41,19 @@ type MercadoLibreWebMetricRow = {
   value?: string | number;
 };
 
+type MercadoLibreOAuthState = {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+  updatedAt: string;
+};
+
 @Injectable()
 export class ExternalApisService {
   private logger = new Logger('ExternalApisService');
   private warnedMissingConfig = new Set<string>();
+  private mercadoLibreOAuthState: MercadoLibreOAuthState | null | undefined;
+  private mercadoLibreRefreshPromise: Promise<string> | null = null;
 
   constructor(
     private configService: ConfigService,
@@ -652,13 +663,10 @@ export class ExternalApisService {
   }
 
   async fetchMercadoLibreMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
-    const webMetrics = await this.fetchMercadoLibreWebMetrics(scope, date);
-    if (webMetrics.length > 0) return webMetrics;
-
     const apiMetrics = await this.fetchMercadoLibreApiMetrics(scope, date);
-    if (apiMetrics.length > 0) return apiMetrics;
+    if (apiMetrics.length > 0 || scope === 'daily') return apiMetrics;
 
-    return this.fetchMercadoLibreSheetMetrics(scope, date);
+    throw new ServiceUnavailableException('Mercado Libre API did not return investment metrics');
   }
 
   private async fetchMercadoLibreWebMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
@@ -785,12 +793,11 @@ export class ExternalApisService {
   }
 
   private async fetchMercadoLibreApiMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
-    const accessToken = this.configService.mercadoLibreAccessToken;
     const configuredAdvertisers = this.parseMercadoLibreAdvertisers(this.configService.mercadoLibreAdvertiserIds);
+    const accessToken = await this.getMercadoLibreAccessToken();
 
     if (!accessToken) {
-      this.warnMissingConfig('mercadolibre-api', 'Mercado Libre access token not configured. Falling back to Sheets.');
-      return [];
+      throw new ServiceUnavailableException('Mercado Libre access token/refresh token not configured');
     }
 
     const startDate = scope === 'monthly' ? this.monthStart(date) : date;
@@ -810,19 +817,10 @@ export class ExternalApisService {
         : await this.fetchMercadoLibreAdvertisers(accessToken);
 
       for (const advertiser of advertisers) {
-        const campaigns = await this.fetchMercadoLibreCampaigns(accessToken, advertiser.id);
-        const effectiveCampaigns = campaigns.length > 0 ? campaigns : [{
-          id: advertiser.id,
-          name: advertiser.accountName || advertiser.id
-        }];
+        const campaigns = await this.fetchMercadoLibreCampaigns(accessToken, advertiser.id, startDate, endDate);
 
-        for (const campaign of effectiveCampaigns) {
-          const metricRows = await this.fetchMercadoLibreCampaignMetrics(
-            accessToken,
-            campaign.id,
-            startDate,
-            endDate
-          );
+        for (const campaign of campaigns) {
+          const metricRows = [campaign];
           const accountName = advertiser.accountName || advertiser.referencia || advertiser.id;
           const referencia = advertiser.referencia || accountName;
 
@@ -895,8 +893,7 @@ export class ExternalApisService {
       });
     } catch (error) {
       const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Mercado Libre API ${scope} sync skipped, falling back to Sheets: ${detail}`);
-      return [];
+      throw new BadGatewayException(`Mercado Libre API ${scope} sync failed (${detail})`);
     }
   }
 
@@ -993,10 +990,10 @@ export class ExternalApisService {
   }
 
   private async fetchMercadoLibreAdvertisers(accessToken: string): Promise<MercadoLibreAdvertiserConfig[]> {
-    const response = await axios.get(
+    const response = await this.mercadoLibreApiGet(
       `${this.configService.mercadoLibreApiBaseUrl}/advertising/advertisers`,
       {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        accessToken,
         params: { product_id: 'PADS' },
         timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
       }
@@ -1018,17 +1015,32 @@ export class ExternalApisService {
       .filter((value: MercadoLibreAdvertiserConfig | null): value is MercadoLibreAdvertiserConfig => Boolean(value));
   }
 
-  private async fetchMercadoLibreCampaigns(accessToken: string, advertiserId: string): Promise<Array<{ id: string; name?: string }>> {
-    const campaigns: Array<{ id: string; name?: string }> = [];
+  private async fetchMercadoLibreCampaigns(
+    accessToken: string,
+    advertiserId: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<any[]> {
+    const campaigns: any[] = [];
     let offset = 0;
     const limit = 50;
 
     do {
-      const response = await axios.get(
+      const response = await this.mercadoLibreApiGet(
         `${this.configService.mercadoLibreApiBaseUrl}/advertising/advertisers/${encodeURIComponent(advertiserId)}/product_ads/campaigns`,
         {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          params: { offset, limit },
+          accessToken,
+          params: {
+            offset,
+            limit,
+            ...(startDate && endDate
+              ? {
+                date_from: startDate,
+                date_to: endDate,
+                metrics: 'cost'
+              }
+              : {})
+          },
           timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
         }
       );
@@ -1039,7 +1051,8 @@ export class ExternalApisService {
         if (!id) return;
         campaigns.push({
           id,
-          name: row.name || row.campaign_name || row.campaignName
+          name: row.name || row.campaign_name || row.campaignName,
+          metrics: row.metrics
         });
       });
 
@@ -1056,10 +1069,10 @@ export class ExternalApisService {
     startDate: string,
     endDate: string
   ): Promise<any[]> {
-    const response = await axios.get(
+    const response = await this.mercadoLibreApiGet(
       `${this.configService.mercadoLibreApiBaseUrl}/advertising/product_ads/campaigns/${encodeURIComponent(campaignId)}/metrics`,
       {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        accessToken,
         params: {
           date_from: startDate,
           date_to: endDate,
@@ -1072,6 +1085,164 @@ export class ExternalApisService {
 
     if (rows.length > 0) return rows;
     return [response.data];
+  }
+
+  private async mercadoLibreApiGet<T = any>(
+    url: string,
+    config: AxiosRequestConfig & { accessToken?: string } = {}
+  ) {
+    const { accessToken, headers, ...axiosConfig } = config;
+    const token = accessToken || await this.getMercadoLibreAccessToken();
+    try {
+      return await axios.get<T>(url, {
+        ...axiosConfig,
+        headers: {
+          ...headers,
+          Authorization: `Bearer ${token}`
+        }
+      });
+    } catch (error) {
+      if (!axios.isAxiosError(error) || error.response?.status !== 401) throw error;
+
+      const refreshedToken = await this.refreshMercadoLibreAccessToken(true);
+      return axios.get<T>(url, {
+        ...axiosConfig,
+        headers: {
+          ...headers,
+          Authorization: `Bearer ${refreshedToken}`
+        }
+      });
+    }
+  }
+
+  private async getMercadoLibreAccessToken(): Promise<string> {
+    const state = await this.loadMercadoLibreOAuthState();
+    const stateAccessToken = state?.accessToken || '';
+
+    if (state && stateAccessToken && !this.isMercadoLibreTokenExpiring(state)) {
+      return stateAccessToken;
+    }
+
+    const canRefresh = Boolean(state?.refreshToken || this.configService.mercadoLibreRefreshToken);
+    if (canRefresh) {
+      return this.refreshMercadoLibreAccessToken(false);
+    }
+
+    return stateAccessToken || this.configService.mercadoLibreAccessToken;
+  }
+
+  private async refreshMercadoLibreAccessToken(force: boolean): Promise<string> {
+    if (this.mercadoLibreRefreshPromise) return this.mercadoLibreRefreshPromise;
+
+    this.mercadoLibreRefreshPromise = this.doRefreshMercadoLibreAccessToken(force)
+      .finally(() => {
+        this.mercadoLibreRefreshPromise = null;
+      });
+
+    return this.mercadoLibreRefreshPromise;
+  }
+
+  private async doRefreshMercadoLibreAccessToken(force: boolean): Promise<string> {
+    const state = await this.loadMercadoLibreOAuthState();
+    if (!force && state?.accessToken && !this.isMercadoLibreTokenExpiring(state)) {
+      return state.accessToken;
+    }
+
+    const clientId = this.configService.mercadoLibreClientId;
+    const clientSecret = this.configService.mercadoLibreClientSecret;
+    const refreshToken = state?.refreshToken || this.configService.mercadoLibreRefreshToken;
+
+    if (!clientId || !clientSecret || !refreshToken) {
+      return state?.accessToken || this.configService.mercadoLibreAccessToken;
+    }
+
+    const response = await axios.post(
+      `${this.configService.mercadoLibreApiBaseUrl}/oauth/token`,
+      new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken
+      }).toString(),
+      {
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
+      }
+    );
+
+    const accessToken = String(response.data?.access_token || '');
+    const nextRefreshToken = String(response.data?.refresh_token || '');
+    const expiresIn = Number(response.data?.expires_in || 0);
+
+    if (!accessToken || !nextRefreshToken || !expiresIn) {
+      throw new ServiceUnavailableException('Mercado Libre OAuth refresh did not return a complete token response');
+    }
+
+    const nextState: MercadoLibreOAuthState = {
+      accessToken,
+      refreshToken: nextRefreshToken,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    await this.saveMercadoLibreOAuthState(nextState);
+    this.mercadoLibreOAuthState = nextState;
+    return accessToken;
+  }
+
+  private async loadMercadoLibreOAuthState(): Promise<MercadoLibreOAuthState | null> {
+    if (this.mercadoLibreOAuthState !== undefined) return this.mercadoLibreOAuthState;
+
+    const statePath = this.getMercadoLibreOAuthStatePath();
+    try {
+      const raw = await fs.readFile(statePath, 'utf8');
+      const parsed = JSON.parse(raw.replace(/^\uFEFF/, ''));
+      this.mercadoLibreOAuthState = {
+        accessToken: String(parsed.accessToken || ''),
+        refreshToken: String(parsed.refreshToken || ''),
+        expiresAt: String(parsed.expiresAt || ''),
+        updatedAt: String(parsed.updatedAt || '')
+      };
+      return this.mercadoLibreOAuthState;
+    } catch {
+      const accessToken = this.configService.mercadoLibreAccessToken;
+      const refreshToken = this.configService.mercadoLibreRefreshToken;
+      this.mercadoLibreOAuthState = accessToken || refreshToken
+        ? {
+          accessToken,
+          refreshToken,
+          expiresAt: '',
+          updatedAt: ''
+        }
+        : null;
+      return this.mercadoLibreOAuthState;
+    }
+  }
+
+  private async saveMercadoLibreOAuthState(state: MercadoLibreOAuthState): Promise<void> {
+    const statePath = this.getMercadoLibreOAuthStatePath();
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  }
+
+  private getMercadoLibreOAuthStatePath(): string {
+    const configured = this.configService.mercadoLibreOAuthStatePath;
+    if (path.isAbsolute(configured)) return configured;
+
+    const cwd = process.cwd();
+    const apiRelative = path.join('apps', 'api');
+    return cwd.endsWith(apiRelative)
+      ? path.resolve(cwd, configured.replace(/^apps[\\/]api[\\/]/, ''))
+      : path.resolve(cwd, configured);
+  }
+
+  private isMercadoLibreTokenExpiring(state: MercadoLibreOAuthState): boolean {
+    const expiresAt = new Date(state.expiresAt).getTime();
+    if (!Number.isFinite(expiresAt)) return true;
+    return expiresAt <= Date.now() + 5 * 60 * 1000;
   }
 
   private extractMercadoLibreList(data: any): any[] {

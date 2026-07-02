@@ -385,7 +385,7 @@ export class InvestmentsService {
         (metric.granularity || 'daily') === 'monthly'
         && this.normalizeReference(metric.cliente) === lineClient
         && this.normalizeReference(metric.marca) === lineBrand
-        && this.normalizePlatform(metric.plataforma) === line.plataforma
+        && this.normalizePlatform(metric.plataforma) === this.normalizePlatform(line.plataforma)
         && metric.date.startsWith(line.mes)
       ));
   }
@@ -440,7 +440,7 @@ export class InvestmentsService {
         (metric.granularity || 'daily') === 'daily'
         && this.normalizeReference(metric.cliente) === lineClient
         && this.normalizeReference(metric.marca) === lineBrand
-        && this.normalizePlatform(metric.plataforma) === line.plataforma
+        && this.normalizePlatform(metric.plataforma) === this.normalizePlatform(line.plataforma)
         && metric.date >= startDate
         && metric.date <= endDate
       ));
@@ -535,7 +535,7 @@ export class InvestmentsService {
         currentLine.mes === line.mes
         && this.normalizeReference(currentLine.anunciante) === lineClient
         && this.normalizeReference(currentLine.marca || currentLine.anunciante) === lineBrand
-        && this.normalizePlatform(currentLine.plataforma) === line.plataforma
+        && this.normalizePlatform(currentLine.plataforma) === this.normalizePlatform(line.plataforma)
       ));
   }
 
