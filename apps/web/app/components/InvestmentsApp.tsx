@@ -1388,6 +1388,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     label="Plataforma"
                     value={controlFilters.plataforma}
                     options={controlFilterOptions.plataforma}
+                    formatOptionLabel={formatPlatformLabel}
                     openFilter={openControlFilter}
                     onToggle={setOpenControlFilter}
                     onChange={(value) => setControlFilters((current) => ({ ...current, plataforma: value }))}
@@ -2305,6 +2306,7 @@ function FilterHeader({
   label,
   value,
   options,
+  formatOptionLabel = (option) => option || 'Todos',
   openFilter,
   onToggle,
   onChange
@@ -2313,6 +2315,7 @@ function FilterHeader({
   label: string;
   value: string;
   options: string[];
+  formatOptionLabel?: (option: string) => string;
   openFilter: ControlFilterKey | null;
   onToggle: (filter: ControlFilterKey | null) => void;
   onChange: (value: string) => void;
@@ -2322,7 +2325,11 @@ function FilterHeader({
   const [typeahead, setTypeahead] = useState('');
   const typeaheadQuery = normalizeTypeaheadText(typeahead);
   const visibleOptions = typeaheadQuery
-    ? allOptions.filter((option) => normalizeTypeaheadText(option || 'Todos').includes(typeaheadQuery))
+    ? allOptions.filter((option) => {
+      const optionLabel = formatOptionLabel(option);
+      return normalizeTypeaheadText(optionLabel).includes(typeaheadQuery)
+        || normalizeTypeaheadText(option).includes(typeaheadQuery);
+    })
     : allOptions;
   const typeaheadMatch = typeaheadQuery ? visibleOptions[0] ?? null : null;
   const typeaheadMatchRef = useRef<HTMLButtonElement | null>(null);
@@ -2395,7 +2402,7 @@ function FilterHeader({
                   onToggle(null);
                 }}
               >
-                {option || 'Todos'}
+                {formatOptionLabel(option)}
               </button>
             )) : (
               <div className="custom-select-empty">Sin resultados</div>

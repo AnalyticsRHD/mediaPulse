@@ -275,7 +275,7 @@ export class InvestmentsService {
     const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
     const monthlyConsumo = monthlyBaseMetrics.length > 0
       ? this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1)
-      : line.lastConsumo || 0;
+      : this.canUseStoredConsumptionFallback(line) ? line.lastConsumo || 0 : 0;
     const cutoffDailyConsumo = mode === 'thisMonth'
       && this.isMonthToDateRange(line, startDate, endDate)
       && !this.metricsCoverDate(monthlyMetrics, endDate)
@@ -313,6 +313,9 @@ export class InvestmentsService {
 
     const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, date, date);
     if (dailyBaseMetrics.length === 0) {
+      if (!this.canUseStoredConsumptionFallback(line)) {
+        return { consumo: 0, hasMetrics: false };
+      }
       if (line.lastConsumoHoyDate === date) {
         return { consumo: line.lastConsumoHoy || 0, hasMetrics: useFallback };
       }
@@ -330,6 +333,13 @@ export class InvestmentsService {
     const snapshot = this.getDailyConsumptionSnapshot(line, today, false);
 
     if (!snapshot.hasMetrics) {
+      if (!this.canUseStoredConsumptionFallback(line)) {
+        return {
+          lastConsumoHoy: 0,
+          lastConsumoHoyDate: today
+        };
+      }
+
       return {
         lastConsumoHoy: line.lastConsumoHoy || 0,
         lastConsumoHoyDate: line.lastConsumoHoyDate || null
@@ -352,8 +362,18 @@ export class InvestmentsService {
   ) {
     const matched = metrics.filter((metric) => this.metricMatchesLine(line, metric));
     if (matched.length > 0) return matched;
+    if (this.requiresExactMetaAdSetMatch(line)) return matched;
 
     return metrics.length === 1 ? metrics : matched;
+  }
+
+  private canUseStoredConsumptionFallback(line: ManualInvestmentLine): boolean {
+    return !this.requiresExactMetaAdSetMatch(line);
+  }
+
+  private requiresExactMetaAdSetMatch(line: ManualInvestmentLine): boolean {
+    return this.normalizePlatform(line.plataforma) === 'META'
+      && Boolean(this.cleanOptionalText(line.campana));
   }
 
   private getMonthlyMetricBaseCandidates(line: ManualInvestmentLine) {
@@ -401,7 +421,7 @@ export class InvestmentsService {
     const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
     const monthlyConsumo = monthlyBaseMetrics.length > 0
       ? this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1)
-      : line.lastConsumo || 0;
+      : this.canUseStoredConsumptionFallback(line) ? line.lastConsumo || 0 : 0;
     if (!monthlyConsumo) return 0;
 
     const rangeDayEquivalents = this.getRangeDayEquivalents(line.mes, startDate, endDate, 'custom');
@@ -446,6 +466,10 @@ export class InvestmentsService {
     if (!campana) return true;
 
     const needle = this.compactText(campana);
+    if (this.normalizePlatform(line.plataforma) === 'META') {
+      return this.compactText(metric.adSetName || '') === needle;
+    }
+
     return this.getCampaignMatchFields(line, metric)
       .some((value) => this.compactText(value || '').includes(needle));
   }
