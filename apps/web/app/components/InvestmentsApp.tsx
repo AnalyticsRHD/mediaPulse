@@ -137,6 +137,7 @@ type InvestmentResponse = {
     endDate: string;
     dias: number;
     diasRestantes: number;
+    diasRestantesExactos: number;
     ritmo: number;
     presupuestoPlanificado: number;
     consumoTotal: number;
@@ -325,6 +326,20 @@ function formatMoney(value: number, moneda: InvestmentCurrency = 'CHL') {
     style: 'currency',
     currency: currencyByMoneda[moneda],
     maximumFractionDigits: moneda === 'USD' ? 2 : 0
+  }).format(value);
+}
+
+function formatDecimal(value: number, maximumFractionDigits = 2) {
+  return new Intl.NumberFormat('es-AR', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits
+  }).format(value);
+}
+
+function formatDayDecimal(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
   }).format(value);
 }
 
@@ -2073,7 +2088,11 @@ function SummaryStrip({
   return (
     <section className="summary-strip">
       <Metric label="Dia" value={summary?.date ?? '-'} />
-      <Metric label="Dias" value={loading ? '...' : String(summary?.dias ?? 0)} />
+      <DaysMetric
+        loading={loading}
+        days={summary?.dias ?? 0}
+        remainingDays={summary?.diasRestantesExactos ?? summary?.diasRestantes ?? 0}
+      />
       <Metric label="Ritmo" value={`${Math.round((summary?.ritmo ?? 0) * 100)}%`} />
       <MetricWithCurrencyFilter
         label="Presupuesto"
@@ -2102,6 +2121,27 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: '
     <div className={`metric ${tone ?? ''}`}>
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function DaysMetric({ loading, days, remainingDays }: { loading: boolean; days: number; remainingDays: number }) {
+  return (
+    <div className="metric days-metric">
+      <div className="days-metric-grid days-metric-labels">
+        <span>Dias</span>
+        <span>Restantes</span>
+      </div>
+      <div className="days-metric-grid days-metric-values">
+        {loading ? (
+          <strong>...</strong>
+        ) : (
+          <>
+            <strong>{days}</strong>
+            <strong>{formatDayDecimal(remainingDays)}</strong>
+          </>
+        )}
+      </div>
     </div>
   );
 }

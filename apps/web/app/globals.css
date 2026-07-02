@@ -465,6 +465,36 @@ h2 {
   font-size: 20px;
 }
 
+.days-metric {
+  gap: 10px;
+}
+
+.days-metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 18px;
+  position: relative;
+}
+
+.days-metric-grid::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+.days-metric-labels span,
+.days-metric-values strong {
+  text-align: center;
+}
+
+.days-metric-values strong {
+  font-size: 20px;
+}
+
 .metric.good strong {
   color: #0f6b3b;
 }

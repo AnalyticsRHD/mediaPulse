@@ -68,6 +68,7 @@ export class InvestmentsService {
         endDate: rangeEndDate,
         dias: displayDays,
         diasRestantes,
+        diasRestantesExactos: Math.round(remainingDayEquivalents * 100) / 100,
         ritmo,
         presupuestoPlanificado: totalBudget,
         consumoTotal,
@@ -714,10 +715,9 @@ export class InvestmentsService {
 
   private getRemainingDayEquivalents(mes: string, date: string): number {
     if (date < `${mes}-01`) return this.daysInMonth(mes);
-    if (date >= `${mes}-${String(this.daysInMonth(mes)).padStart(2, '0')}`) return 0;
+    if (date > `${mes}-${String(this.daysInMonth(mes)).padStart(2, '0')}`) return 0;
 
-    const totalBudgetMinutes = Math.max(this.daysInMonth(mes) - 1, 0) * 1440;
-    return Math.max((totalBudgetMinutes - this.getElapsedMinutes(mes, date)) / 1440, 0);
+    return Math.max(this.daysInMonth(mes) - this.getElapsedDayEquivalents(mes, date), 0);
   }
 
   private getRemainingDayEquivalentsFromSync(mes: string, syncedAt?: string | null): number | null {

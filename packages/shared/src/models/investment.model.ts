@@ -68,6 +68,7 @@ export interface InvestmentSummary {
   endDate: string;
   dias: number;
   diasRestantes: number;
+  diasRestantesExactos: number;
   ritmo: number;
   presupuestoPlanificado: number;
   consumoTotal: number;
