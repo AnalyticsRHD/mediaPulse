@@ -319,7 +319,7 @@ export class InvestmentsService {
       if (line.lastConsumoHoyDate === date) {
         return { consumo: line.lastConsumoHoy || 0, hasMetrics: useFallback };
       }
-      return { consumo: useFallback ? line.lastConsumoDia || 0 : 0, hasMetrics: false };
+      return { consumo: 0, hasMetrics: false };
     }
     const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics);
     return {

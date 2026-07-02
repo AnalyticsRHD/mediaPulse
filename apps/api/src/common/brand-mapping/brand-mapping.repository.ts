@@ -46,14 +46,59 @@ export class BrandMappingRepository implements OnApplicationShutdown {
     if (!(await this.init()) || !this.pool) return false;
 
     for (const mapping of mappings) {
-      await this.pool.query(
-        `
-          INSERT INTO brand_mappings (cliente, marca)
-          VALUES ($1, $2)
-          ON CONFLICT (cliente, marca) DO NOTHING;
-        `,
-        [mapping.cliente, mapping.marca]
-      );
+      await this.pool.query('BEGIN');
+      try {
+        const existing = await this.pool.query<{ id: string }>(
+          `
+            SELECT id
+            FROM brand_mappings
+            WHERE lower(trim(cliente)) = lower(trim($1))
+              AND lower(trim(marca)) = lower(trim($2))
+            ORDER BY id ASC;
+          `,
+          [mapping.cliente, mapping.marca]
+        );
+
+        if (existing.rows.length > 0) {
+          const canonicalId = existing.rows[0].id;
+          const duplicateIds = existing.rows.slice(1).map((row) => row.id);
+
+          if (duplicateIds.length > 0) {
+            await this.pool.query(
+              'DELETE FROM brand_mappings WHERE id = ANY($1::bigint[])',
+              [duplicateIds]
+            );
+          }
+
+          await this.pool.query(
+            `
+              UPDATE brand_mappings
+              SET cliente = $1,
+                  marca = $2,
+                  updated_at = now()
+              WHERE id = $3;
+            `,
+            [mapping.cliente, mapping.marca, canonicalId]
+          );
+        } else {
+          await this.pool.query(
+            `
+              INSERT INTO brand_mappings (cliente, marca)
+              VALUES ($1, $2)
+              ON CONFLICT (cliente, marca) DO UPDATE
+              SET cliente = EXCLUDED.cliente,
+                  marca = EXCLUDED.marca,
+                  updated_at = now();
+            `,
+            [mapping.cliente, mapping.marca]
+          );
+        }
+
+        await this.pool.query('COMMIT');
+      } catch (error) {
+        await this.pool.query('ROLLBACK');
+        throw error;
+      }
     }
 
     return true;

@@ -806,55 +806,62 @@ export class ExternalApisService {
       advertiserId: string;
       accountName: string;
       referencia: string;
-      campaignId: string;
-      campaignName: string;
       spend: number;
     }>();
 
     try {
+      const products = new Set(this.configService.mercadoLibreProducts.map((product) => product.toUpperCase()));
+      const includeProductAds = products.size === 0 || products.has('PADS');
+      const includeDisplay = products.has('DSP') || products.has('DISPLAY');
       const advertisers = configuredAdvertisers.length > 0
         ? configuredAdvertisers
         : await this.fetchMercadoLibreAdvertisers(accessToken);
 
       for (const advertiser of advertisers) {
-        const campaigns = await this.fetchMercadoLibreCampaigns(accessToken, advertiser.id, startDate, endDate);
+        if (includeProductAds) {
+          const campaigns = await this.fetchMercadoLibreCampaigns(accessToken, advertiser.id, startDate, endDate);
 
-        for (const campaign of campaigns) {
-          const metricRows = [campaign];
-          const accountName = advertiser.accountName || advertiser.referencia || advertiser.id;
-          const referencia = advertiser.referencia || accountName;
-
-          for (const row of metricRows) {
-            const metricDate = String(
-              row.date
-              || row.day
-              || row.stat_time_day
-              || row.period
-              || endDate
-            ).slice(0, 10);
-            const bucketDate = scope === 'monthly' ? this.monthStart(metricDate) : metricDate;
-            const spend = this.numberValue(
-              row.cost
-              ?? row.spend
-              ?? row.investment
-              ?? row.amount
-              ?? row.metrics?.cost
-              ?? row.metrics?.spend
+          for (const campaign of campaigns) {
+            this.addMercadoLibreSpend(
+              aggregated,
+              advertiser,
+              scope,
+              endDate,
+              campaign,
+              this.numberValue(
+                campaign.cost
+                ?? campaign.spend
+                ?? campaign.investment
+                ?? campaign.amount
+                ?? campaign.metrics?.cost
+                ?? campaign.metrics?.spend
+              )
             );
-            if (spend === 0) continue;
+          }
+        }
 
-            const campaignName = String(campaign.name || row.campaign_name || row.name || campaign.id);
-            const key = `${bucketDate}||${advertiser.id}||${accountName}||${campaign.id}||${campaignName}`;
-            const existing = aggregated.get(key) ?? {
-              advertiserId: advertiser.id,
-              accountName,
-              referencia,
-              campaignId: campaign.id,
-              campaignName,
-              spend: 0
-            };
-            existing.spend += spend;
-            aggregated.set(key, existing);
+        if (includeDisplay) {
+          const campaigns = await this.fetchMercadoLibreDisplayCampaigns(accessToken, advertiser.id);
+
+          for (const campaign of campaigns) {
+            const metricRows = await this.fetchMercadoLibreDisplayCampaignMetrics(
+              accessToken,
+              advertiser.id,
+              String(campaign.id),
+              startDate,
+              endDate
+            );
+
+            for (const metricRow of metricRows) {
+              this.addMercadoLibreSpend(
+                aggregated,
+                advertiser,
+                scope,
+                endDate,
+                metricRow,
+                this.numberValue(metricRow.consumed_budget)
+              );
+            }
           }
         }
       }
@@ -874,8 +881,8 @@ export class ExternalApisService {
           accountId: value.advertiserId,
           accountName: value.accountName,
           plataforma: 'MELI',
-          campaignId: `MercadoLibre-${value.advertiserId}-${value.campaignId}-${scope}-${metricDate}-${index}`,
-          campaignName: value.campaignName,
+          campaignId: `MercadoLibre-${value.advertiserId}-all-${scope}-${metricDate}-${index}`,
+          campaignName: value.accountName,
           granularity: scope,
           coverageEndDate: scope === 'monthly' ? endDate : undefined,
           spend: this.round2(value.spend),
@@ -1061,6 +1068,99 @@ export class ExternalApisService {
     } while (offset < 10000);
 
     return campaigns;
+  }
+
+  private async fetchMercadoLibreDisplayCampaigns(accessToken: string, advertiserId: string): Promise<any[]> {
+    const campaigns: any[] = [];
+    let offset = 0;
+    const limit = 50;
+
+    do {
+      const response = await this.mercadoLibreApiGet(
+        `${this.configService.mercadoLibreApiBaseUrl}/advertising/advertisers/${encodeURIComponent(advertiserId)}/display/campaigns`,
+        {
+          accessToken,
+          params: { offset, limit },
+          timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
+        }
+      );
+      const rows = this.extractMercadoLibreList(response.data);
+
+      rows.forEach((row) => {
+        const id = String(row.id || row.campaign_id || row.campaignId || '');
+        if (!id) return;
+        campaigns.push({
+          id,
+          name: row.name || row.campaign_name || row.campaignName,
+          goal: row.goal
+        });
+      });
+
+      if (rows.length < limit) break;
+      offset += limit;
+    } while (offset < 10000);
+
+    return campaigns;
+  }
+
+  private async fetchMercadoLibreDisplayCampaignMetrics(
+    accessToken: string,
+    advertiserId: string,
+    campaignId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<any[]> {
+    const response = await this.mercadoLibreApiGet(
+      `${this.configService.mercadoLibreApiBaseUrl}/advertising/advertisers/${encodeURIComponent(advertiserId)}/display/campaigns/${encodeURIComponent(campaignId)}/metrics`,
+      {
+        accessToken,
+        params: {
+          date_from: startDate,
+          date_to: endDate
+        },
+        timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
+      }
+    );
+    const rows = Array.isArray(response.data?.metrics) ? response.data.metrics : [];
+
+    if (rows.length > 0) return rows;
+    return response.data?.summary ? [response.data.summary] : [];
+  }
+
+  private addMercadoLibreSpend(
+    aggregated: Map<string, {
+      advertiserId: string;
+      accountName: string;
+      referencia: string;
+      spend: number;
+    }>,
+    advertiser: MercadoLibreAdvertiserConfig,
+    scope: SupermetricsScope,
+    endDate: string,
+    row: any,
+    spend: number
+  ): void {
+    if (spend === 0) return;
+
+    const accountName = advertiser.accountName || advertiser.referencia || advertiser.id;
+    const referencia = advertiser.referencia || accountName;
+    const metricDate = String(
+      row.date
+      || row.day
+      || row.stat_time_day
+      || row.period
+      || endDate
+    ).slice(0, 10);
+    const bucketDate = scope === 'monthly' ? this.monthStart(metricDate) : metricDate;
+    const key = `${bucketDate}||${advertiser.id}||${accountName}`;
+    const existing = aggregated.get(key) ?? {
+      advertiserId: advertiser.id,
+      accountName,
+      referencia,
+      spend: 0
+    };
+    existing.spend += spend;
+    aggregated.set(key, existing);
   }
 
   private async fetchMercadoLibreCampaignMetrics(

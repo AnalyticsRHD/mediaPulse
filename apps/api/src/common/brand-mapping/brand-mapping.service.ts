@@ -36,7 +36,7 @@ export class BrandMappingService {
     { cliente: 'LONDON', marca: 'Maria Taratuty' },
     { cliente: 'LONDON', marca: 'London Inst.' },
     { cliente: 'LONDON', marca: 'London Fundación' },
-    { cliente: 'RHD', marca: 'Rhd' }
+    { cliente: 'RHD', marca: 'RHD' }
   ];
 
   private mappings: BrandMapping[] = this.defaultMappings;
