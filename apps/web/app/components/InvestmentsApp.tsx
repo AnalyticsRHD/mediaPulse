@@ -258,7 +258,7 @@ const sortLabels: Record<SortKey, string> = {
   presupuesto: 'Presupuesto',
   consumo: 'Consumo',
   porcentajeConsumo: '% Consumo',
-  consumoRestante: 'Consumo restante',
+  consumoRestante: 'Consumo restante mensual',
   nuevoPresupuestoDiario: 'Nuevo presupuesto diario',
   desvio: 'Desvio',
   consumoDia: 'Consumo ayer',
@@ -301,7 +301,7 @@ function getConsumptionSyncDate(preset: DatePreset, range: DateRange) {
 }
 
 function getConsumoDiaLabel(preset: DatePreset) {
-  if (preset === 'today' || preset === 'thisMonth') return 'Consumo hoy';
+  if (preset === 'today' || preset === 'thisMonth') return 'Consumo diario actual';
   if (preset === 'yesterday') return 'Consumo ayer';
   return 'Consumo dia';
 }
@@ -409,6 +409,19 @@ type ControlCurrencyTotal = {
   nuevoPresupuestoDiario: number;
   consumoDia: number;
 };
+
+function getNuevoPresupuestoParaHoy(line: InvestmentLine) {
+  return line.nuevoPresupuestoDiario + line.consumoDia;
+}
+
+function getControlSortValue(line: InvestmentLine, key: SortKey) {
+  if (key === 'nuevoPresupuestoDiario') return getNuevoPresupuestoParaHoy(line);
+  return Number(line[key] ?? 0);
+}
+
+function getTotalNuevoPresupuestoParaHoy(total: ControlCurrencyTotal) {
+  return total.nuevoPresupuestoDiario + total.consumoDia;
+}
 
 function sortCurrencyTotals(totals: CurrencyTotal[]) {
   return totals.sort((a, b) => a.moneda.localeCompare(b.moneda));
@@ -669,7 +682,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     if (!controlSort) return lines;
 
     return [...lines].sort((a, b) => {
-      const result = Number(a[controlSort.key] ?? 0) - Number(b[controlSort.key] ?? 0);
+      const result = getControlSortValue(a, controlSort.key) - getControlSortValue(b, controlSort.key);
       return controlSort.direction === 'asc' ? result : -result;
     });
   }, [scopedControlData, controlFilters, controlSort]);
@@ -1428,7 +1441,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     <td>{formatMoney(line.consumo, line.moneda)}</td>
                     <td>{Math.round(line.porcentajeConsumo * 100)}%</td>
                     <td className={line.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(line.consumoRestante, line.moneda)}</td>
-                    <td>{formatMoney(line.nuevoPresupuestoDiario, line.moneda)}</td>
+                    <td>{formatMoney(getNuevoPresupuestoParaHoy(line), line.moneda)}</td>
                     <td className={getDeviationClass(line.desvio)}>{Math.round(line.desvio * 100)}%</td>
                     <td>{formatMoney(line.consumoDia, line.moneda)}</td>
                     <td>{integer.format(line.resultadosProyectados)}</td>
@@ -1455,7 +1468,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       <td>{formatMoney(total.consumo, total.moneda)}</td>
                       <td>{total.presupuesto > 0 ? `${Math.round((total.consumo / total.presupuesto) * 100)}%` : '0%'}</td>
                       <td className={total.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(total.consumoRestante, total.moneda)}</td>
-                      <td>{formatMoney(total.nuevoPresupuestoDiario, total.moneda)}</td>
+                      <td>{formatMoney(getTotalNuevoPresupuestoParaHoy(total), total.moneda)}</td>
                       <td></td>
                       <td>{formatMoney(total.consumoDia, total.moneda)}</td>
                       <td colSpan={3}></td>
