@@ -274,6 +274,9 @@ export class InvestmentsService {
     }
 
     const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
+    const mercadoLibreMonthToDateConsumo = mode === 'thisMonth' && this.isMonthToDateRange(line, startDate, endDate)
+      ? this.getMercadoLibreMonthToDateConsumption(line, endDate, consumoDiaSnapshot)
+      : null;
     const monthlyConsumo = monthlyBaseMetrics.length > 0
       ? this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1)
       : this.canUseStoredConsumptionFallback(line) ? line.lastConsumo || 0 : 0;
@@ -282,7 +285,7 @@ export class InvestmentsService {
       && !this.metricsCoverDate(monthlyMetrics, endDate)
       ? this.getCutoffDailyConsumption(line, endDate)
       : 0;
-    const consumo = monthlyConsumo + cutoffDailyConsumo;
+    const consumo = mercadoLibreMonthToDateConsumo ?? monthlyConsumo + cutoffDailyConsumo;
 
     return {
       consumo,
@@ -298,6 +301,23 @@ export class InvestmentsService {
 
   private getCutoffDailyConsumption(line: ManualInvestmentLine, endDate: string): number {
     return this.getDailyConsumptionSnapshot(line, endDate, false).consumo;
+  }
+
+  private getMercadoLibreMonthToDateConsumption(
+    line: ManualInvestmentLine,
+    endDate: string,
+    dailySnapshot: { consumo: number; hasMetrics: boolean }
+  ): number | null {
+    if (this.normalizePlatform(line.plataforma) !== 'MELI') return null;
+    if (!this.canUseStoredConsumptionFallback(line)) return null;
+
+    const storedConsumo = line.lastConsumo || 0;
+    if (!storedConsumo) return null;
+    if (line.lastConsumoHoyDate === endDate) return storedConsumo;
+    if (!dailySnapshot.hasMetrics) return storedConsumo;
+    if (line.lastConsumoHoyDate && line.lastConsumoHoyDate > endDate) return storedConsumo;
+
+    return storedConsumo + dailySnapshot.consumo;
   }
 
   private getConsumoDiaDate(mode: InvestmentRangeMode, endDate: string): string {
