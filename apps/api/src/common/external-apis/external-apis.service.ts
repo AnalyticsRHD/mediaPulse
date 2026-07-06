@@ -242,7 +242,16 @@ export class ExternalApisService {
 
     for (const item of aggregated.values()) {
       const referencia = this.inferReference(item.accountName) || item.accountName;
-      const mapping = await this.brandMappingService.resolve(referencia);
+      let mapping = await this.brandMappingService.resolve(referencia);
+      // Fallback: some Meta accounts include RHD in the account name (e.g. RED_HOOK_DATA_RHD_GESTION_CO)
+      // brandMapping.resolve may return 'SIN MAPEO' for the cleaned reference. If account name
+      // contains RHD or RED_HOOK, map it to the RHD client so metrics match manual lines.
+      if (mapping.cliente === 'SIN MAPEO') {
+        const acct = String(item.accountName || '').toUpperCase();
+        if (acct.includes('RHD') || acct.includes('RED_HOOK')) {
+          mapping = { cliente: 'RHD', marca: 'RHD' };
+        }
+      }
       const metricCampaignId = [
         'META',
         item.accountId,
@@ -663,10 +672,25 @@ export class ExternalApisService {
   }
 
   async fetchMercadoLibreMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
-    const apiMetrics = await this.fetchMercadoLibreApiMetrics(scope, date);
-    if (apiMetrics.length > 0 || scope === 'daily') return apiMetrics;
+    // Try API first, then web scraping, then fallback to Google Sheets raw data.
+    try {
+      const apiMetrics = await this.fetchMercadoLibreApiMetrics(scope, date);
+      if (apiMetrics.length > 0 || scope === 'daily') return apiMetrics;
+    } catch (error) {
+      this.logger.warn(`Mercado Libre API sync failed, will try web/sheets fallback: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
-    throw new ServiceUnavailableException('Mercado Libre API did not return investment metrics');
+    try {
+      const webMetrics = await this.fetchMercadoLibreWebMetrics(scope, date);
+      if (webMetrics.length > 0) return webMetrics;
+    } catch (error) {
+      this.logger.warn(`Mercado Libre web sync failed, will try sheets fallback: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    const sheetMetrics = await this.fetchMercadoLibreSheetMetrics(scope, date);
+    if (sheetMetrics.length > 0) return sheetMetrics;
+
+    throw new ServiceUnavailableException('Mercado Libre did not return investment metrics from API, web or sheets');
   }
 
   private async fetchMercadoLibreWebMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {

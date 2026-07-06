@@ -246,7 +246,7 @@ export class InvestmentsService {
     const consumoDiaSnapshot = this.getDailyConsumptionSnapshot(
       line,
       this.getConsumoDiaDate(mode, endDate),
-      mode !== 'today'
+      mode !== 'today' && mode !== 'custom'
     );
     const consumoDia = consumoDiaSnapshot.consumo;
     const isSingleDayRange = startDate === endDate;
@@ -262,24 +262,37 @@ export class InvestmentsService {
 
     if (mode === 'custom') {
       const rangeSnapshot = this.getDateRangeConsumptionSnapshot(line, startDate, endDate);
-      const consumo = rangeSnapshot.hasMetrics
-        ? rangeSnapshot.consumo
-        : this.getMonthlyRangeFallback(line, startDate, endDate, monthlyBaseMetrics);
+      const monthlyFallback = this.getMonthlyRangeFallback(line, startDate, endDate, monthlyBaseMetrics);
+
       return {
-        consumo,
+        consumo: rangeSnapshot.hasMetrics ? rangeSnapshot.consumo : monthlyFallback,
         consumoDia,
-        hasMonthlyMetrics: false,
+        hasMonthlyMetrics: !rangeSnapshot.hasMetrics && monthlyBaseMetrics.length > 0,
         hasDailyMetrics: rangeSnapshot.hasMetrics || consumoDiaSnapshot.hasMetrics
       };
     }
 
     const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
-    const mercadoLibreMonthToDateConsumo = mode === 'thisMonth' && this.isMonthToDateRange(line, startDate, endDate)
+    let mercadoLibreMonthToDateConsumo = mode === 'thisMonth' && this.isMonthToDateRange(line, startDate, endDate)
       ? this.getMercadoLibreMonthToDateConsumption(line, endDate, consumoDiaSnapshot)
       : null;
-    const monthlyConsumo = monthlyBaseMetrics.length > 0
-      ? this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1)
-      : this.canUseStoredConsumptionFallback(line) ? line.lastConsumo || 0 : 0;
+    // For Mercado Libre prefer recalculating from monthly metrics instead of
+    // relying on stored snapshots which may be stale or partial.
+    if (this.normalizePlatform(line.plataforma) === 'MELI') {
+      mercadoLibreMonthToDateConsumo = null;
+    }
+    let monthlyConsumo = 0;
+    if (monthlyBaseMetrics.length > 0) {
+      // Special-case Mercado Libre: prefer the raw sum of monthly metrics to avoid
+      // possible weighting/matching rules excluding display/product campaign rows.
+      if (this.normalizePlatform(line.plataforma) === 'MELI') {
+        monthlyConsumo = monthlyBaseMetrics.reduce((sum, m) => sum + Number(m.spend || 0), 0);
+      } else {
+        monthlyConsumo = this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1);
+      }
+    } else {
+      monthlyConsumo = this.canUseStoredConsumptionFallback(line) ? line.lastConsumo || 0 : 0;
+    }
     const cutoffDailyConsumo = mode === 'thisMonth'
       && this.isMonthToDateRange(line, startDate, endDate)
       && !this.metricsCoverDate(monthlyMetrics, endDate)
@@ -334,6 +347,17 @@ export class InvestmentsService {
 
     const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, date, date);
     if (dailyBaseMetrics.length === 0) {
+      if (!this.canUseStoredConsumptionFallback(line) || !useFallback) {
+        return { consumo: 0, hasMetrics: false };
+      }
+      if (line.lastConsumoHoyDate === date) {
+        return { consumo: line.lastConsumoHoy || 0, hasMetrics: true };
+      }
+      return { consumo: 0, hasMetrics: false };
+    }
+
+    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics, useFallback);
+    if (dailyMetrics.length === 0) {
       if (!this.canUseStoredConsumptionFallback(line)) {
         return { consumo: 0, hasMetrics: false };
       }
@@ -342,7 +366,7 @@ export class InvestmentsService {
       }
       return { consumo: 0, hasMetrics: false };
     }
-    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics);
+
     return {
       consumo: this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1),
       hasMetrics: true
@@ -379,13 +403,35 @@ export class InvestmentsService {
 
   private getMatchedMetricsWithFallback(
     line: ManualInvestmentLine,
-    metrics: Array<{ objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string; spend: number; coverageEndDate?: string }>
+    metrics: Array<{ objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string; spend: number; coverageEndDate?: string }>,
+    allowSingleCandidateFallback = true
   ) {
     const matched = metrics.filter((metric) => this.metricMatchesLine(line, metric));
     if (matched.length > 0) return matched;
-    if (this.requiresExactMetaAdSetMatch(line)) return matched;
 
-    return metrics.length === 1 ? metrics : matched;
+    if (this.requiresExactMetaAdSetMatch(line)) {
+      const fuzzyMatches = metrics.filter((metric) => this.metaCampaignMatchesMetric(this.cleanOptionalText(line.campana) || '', metric));
+
+      // Debugging: when the client is RHD, log candidate metrics for investigation
+      try {
+        const normalizedClient = this.normalizeReference(line.anunciante);
+        if (normalizedClient === 'rhd') {
+          const candidateSummaries = metrics.map((m) => ({ adSetName: m.adSetName, campaignName: m.campaignName, campaignId: m.campaignId, spend: m.spend }));
+          // eslint-disable-next-line no-console
+          console.log('DEBUG RHD metric candidates for', line.campana, '=>', JSON.stringify(candidateSummaries));
+          const fuzzySummaries = fuzzyMatches.map((m) => ({ adSetName: m.adSetName, campaignName: m.campaignName, campaignId: m.campaignId, spend: m.spend }));
+          // eslint-disable-next-line no-console
+          console.log('DEBUG RHD fuzzy matches =>', JSON.stringify(fuzzySummaries));
+        }
+      } catch (e) {
+        // ignore debug errors
+      }
+
+      if (fuzzyMatches.length === 1) return fuzzyMatches;
+      return [];
+    }
+
+    return allowSingleCandidateFallback && metrics.length === 1 ? metrics : matched;
   }
 
   private canUseStoredConsumptionFallback(line: ManualInvestmentLine): boolean {
@@ -424,13 +470,19 @@ export class InvestmentsService {
     hasMetrics: boolean;
   } {
     const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, startDate, endDate);
-    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics);
-    return dailyBaseMetrics.length > 0
-      ? {
-        consumo: this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1),
-        hasMetrics: true
-      }
-      : { consumo: 0, hasMetrics: false };
+    if (dailyBaseMetrics.length === 0) {
+      return { consumo: 0, hasMetrics: false };
+    }
+
+    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics, false);
+    if (dailyMetrics.length === 0) {
+      return { consumo: 0, hasMetrics: false };
+    }
+
+    return {
+      consumo: this.getWeightedMetricSpend(dailyMetrics, line, dailyBaseMetrics.length === 1),
+      hasMetrics: true
+    };
   }
 
   private getMonthlyRangeFallback(
@@ -439,10 +491,9 @@ export class InvestmentsService {
     endDate: string,
     monthlyBaseMetrics: Array<{ objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string; spend: number; coverageEndDate?: string }>
   ): number {
-    const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
-    const monthlyConsumo = monthlyBaseMetrics.length > 0
-      ? this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1)
-      : this.canUseStoredConsumptionFallback(line) ? line.lastConsumo || 0 : 0;
+    if (monthlyBaseMetrics.length === 0) return 0;
+
+    const monthlyConsumo = this.getMonthlyMetricSpend(line, monthlyBaseMetrics);
     if (!monthlyConsumo) return 0;
 
     const rangeDayEquivalents = this.getRangeDayEquivalents(line.mes, startDate, endDate, 'custom');
@@ -478,6 +529,19 @@ export class InvestmentsService {
     }, 0);
   }
 
+  private getMonthlyMetricSpend(
+    line: ManualInvestmentLine,
+    monthlyBaseMetrics: Array<{ objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string; spend: number; coverageEndDate?: string }>
+  ): number {
+    if (monthlyBaseMetrics.length === 0) return 0;
+    if (this.normalizePlatform(line.plataforma) === 'MELI') {
+      return monthlyBaseMetrics.reduce((sum, metric) => sum + Number(metric.spend || 0), 0);
+    }
+
+    const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
+    return this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1);
+  }
+
   private metricMatchesLine(line: ManualInvestmentLine, metric: { objetivo?: string; campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string }): boolean {
     return this.metricMatchesCampana(line, metric) && this.getMetricLineWeight(metric, line) > 0;
   }
@@ -493,6 +557,42 @@ export class InvestmentsService {
 
     return this.getCampaignMatchFields(line, metric)
       .some((value) => this.compactText(value || '').includes(needle));
+  }
+
+  private metaCampaignMatchesMetric(
+    needle: string,
+    metric: { campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string }
+  ): boolean {
+    const normalizedNeedle = this.normalizeMetaMatchText(needle);
+    if (!normalizedNeedle) return false;
+
+    const candidates = [metric.adSetName, metric.campaignName, metric.adGroupName, metric.campaignId]
+      .filter((value): value is string => Boolean(value));
+
+    return candidates.some((value) => {
+      const normalizedCandidate = this.normalizeMetaMatchText(String(value));
+      if (!normalizedCandidate) return false;
+      if (normalizedCandidate === normalizedNeedle) return true;
+      if (normalizedCandidate.includes(normalizedNeedle) || normalizedNeedle.includes(normalizedCandidate)) {
+        return normalizedCandidate.length > 3 && normalizedNeedle.length > 3;
+      }
+
+      const needleTokens = normalizedNeedle.split(' ').filter(Boolean);
+      const candidateTokens = normalizedCandidate.split(' ').filter(Boolean);
+      const overlap = needleTokens.filter((token) => candidateTokens.includes(token));
+      return overlap.length >= 1 && overlap.length >= Math.min(2, Math.min(needleTokens.length, candidateTokens.length));
+    });
+  }
+
+  private normalizeMetaMatchText(value: string): string {
+    return String(value)
+      .toLowerCase()
+      .replace(/[_\-/]+/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter((token) => !['rhd', 'gestion', 'managed', 'data', 'co', 'ads', 'meta', 'facebook', 'account', 'campaign', 'campana', 'adset', 'adgroup', 'marketing'].includes(token))
+      .join(' ');
   }
 
   private getCampaignMatchFields(line: ManualInvestmentLine, metric: { campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string }): Array<string | undefined> {
