@@ -35,6 +35,18 @@ export class InvestmentsController {
     return history;
   }
 
+  @Post('manual/:id/deviation-comments')
+  async addDeviationComment(
+    @Param('id') id: string,
+    @Body('comment') comment: string,
+    @Headers('authorization') authorization?: string
+  ) {
+    const user = await this.authService.requireUser(authorization);
+    const saved = await this.investmentsService.addDeviationComment(id, comment, user);
+    if (!saved) throw new NotFoundException('Manual investment line not found');
+    return saved;
+  }
+
   @Post('manual')
   async createManualLine(@Body() dto: ManualInvestmentDto, @Headers('authorization') authorization?: string) {
     const user = await this.authService.requireManualEditor(authorization);

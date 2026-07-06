@@ -127,6 +127,7 @@ type InvestmentLine = {
   consumoRestante: number;
   porcentajeConsumo: number;
   desvio: number;
+  latestDeviationComment?: InvestmentDeviationComment | null;
 };
 
 type InvestmentResponse = {
@@ -184,6 +185,15 @@ type ManualInvestmentLog = {
   createdAt: string;
   updatedAt: string | null;
   deletedAt: string | null;
+};
+
+type InvestmentDeviationComment = {
+  id: string;
+  manualInvestmentLineId: string;
+  comment: string;
+  userId: string | null;
+  userName: string;
+  createdAt: string;
 };
 
 function yesterdayDate() {
@@ -649,6 +659,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const [historyModalLine, setHistoryModalLine] = useState<InvestmentLine | null>(null);
   const [lineHistory, setLineHistory] = useState<ManualInvestmentLog[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [deviationModalLine, setDeviationModalLine] = useState<InvestmentLine | null>(null);
+  const [deviationCommentDraft, setDeviationCommentDraft] = useState('');
+  const [deviationSaving, setDeviationSaving] = useState(false);
   const [brandClients, setBrandClients] = useState<string[]>([]);
   const [brandCatalog, setBrandCatalog] = useState<Record<string, string[]>>({});
   const [viewAs, setViewAs] = useState(GENERAL_VIEW);
@@ -871,6 +884,49 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     }
   }
 
+  function openDeviationCommentModal(line: InvestmentLine) {
+    setDeviationModalLine(line);
+    setDeviationCommentDraft(line.latestDeviationComment?.comment ?? '');
+    setErrorMessage('');
+  }
+
+  async function saveDeviationComment() {
+    if (!deviationModalLine) return;
+    const comment = deviationCommentDraft.trim();
+    if (!comment) {
+      setErrorMessage('La observacion no puede estar vacia');
+      return;
+    }
+
+    setDeviationSaving(true);
+    setErrorMessage('');
+    try {
+      const saved = await requestJson<InvestmentDeviationComment>(
+        `${API_BASE}/investments/manual/${deviationModalLine.id}/deviation-comments`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ comment })
+        }
+      );
+
+      setData((current) => current ? {
+        ...current,
+        lines: current.lines.map((line) => (
+          line.id === deviationModalLine.id
+            ? { ...line, latestDeviationComment: saved }
+            : line
+        ))
+      } : current);
+      setDeviationModalLine(null);
+      setDeviationCommentDraft('');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudo guardar la observacion');
+    } finally {
+      setDeviationSaving(false);
+    }
+  }
+
   useEffect(() => {
     async function restoreSession() {
       try {
@@ -1030,6 +1086,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       setOpenSelectId(null);
       setOpenControlFilter(null);
       setPreviousValuesOpen(false);
+      setDeviationModalLine(null);
     }
 
     document.addEventListener('mousedown', closeDropdowns);
@@ -1466,7 +1523,20 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     <td>{Math.round(line.porcentajeConsumo * 100)}%</td>
                     <td className={line.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(line.consumoRestante, line.moneda)}</td>
                     <td>{formatMoney(line.nuevoPresupuestoDiario, line.moneda)}</td>
-                    <td className={getDeviationClass(line.desvio)}>{Math.round(line.desvio * 100)}%</td>
+                    <td
+                      className={getDeviationClass(line.desvio)}
+                      title={line.latestDeviationComment ? `${line.latestDeviationComment.comment}\n${line.latestDeviationComment.userName} - ${formatLastUpdate(line.latestDeviationComment.createdAt)}` : 'Sin observaciones'}
+                    >
+                      <button
+                        className="deviation-button"
+                        type="button"
+                        onClick={() => openDeviationCommentModal(line)}
+                        aria-label={`Agregar observacion de desvio para ${line.anunciante} ${line.marca ?? ''}`}
+                      >
+                        <span>{Math.round(line.desvio * 100)}%</span>
+                        {line.latestDeviationComment ? <span className="comment-dot" aria-hidden="true"></span> : null}
+                      </button>
+                    </td>
                     <td>{formatMoney(line.consumoDia, line.moneda)}</td>
                     <td>{integer.format(line.resultadosProyectados)}</td>
                     <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
@@ -1991,6 +2061,52 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                   </dl>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deviationModalLine ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="deviation-comment-modal" role="dialog" aria-modal="true" aria-labelledby="deviation-comment-title">
+            <div className="previous-values-header">
+              <div>
+                <span>Observacion de desvio</span>
+                <h2 id="deviation-comment-title">{deviationModalLine.marca ?? deviationModalLine.anunciante}</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setDeviationModalLine(null)} aria-label="Cerrar observacion">
+                X
+              </button>
+            </div>
+            <p>
+              {deviationModalLine.anunciante} / {deviationModalLine.plataforma} / {deviationModalLine.objetivo}
+            </p>
+            {deviationModalLine.latestDeviationComment ? (
+              <div className="latest-comment-preview">
+                <span>Ultima observacion</span>
+                <p>{deviationModalLine.latestDeviationComment.comment}</p>
+                <small>
+                  {deviationModalLine.latestDeviationComment.userName} - {formatLastUpdate(deviationModalLine.latestDeviationComment.createdAt)}
+                </small>
+              </div>
+            ) : null}
+            <label className="deviation-comment-field">
+              Observaciones
+              <textarea
+                value={deviationCommentDraft}
+                onChange={(event) => setDeviationCommentDraft(event.target.value)}
+                maxLength={1000}
+                rows={5}
+                autoFocus
+              />
+            </label>
+            <div className="modal-actions">
+              <button className="modal-button muted" type="button" onClick={() => setDeviationModalLine(null)} disabled={deviationSaving}>
+                Cancelar
+              </button>
+              <button className="modal-button" type="button" onClick={saveDeviationComment} disabled={deviationSaving || !deviationCommentDraft.trim()}>
+                {deviationSaving ? 'Guardando...' : 'Guardar'}
+              </button>
             </div>
           </div>
         </div>

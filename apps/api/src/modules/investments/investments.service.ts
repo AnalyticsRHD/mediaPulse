@@ -1,5 +1,5 @@
 import { BadRequestException, forwardRef, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
-import { InvestmentCurrency, InvestmentLine, InvestmentStatus, InvestmentsResponse, ManualInvestmentLine, ManualInvestmentLog } from '@mediapulse/shared';
+import { InvestmentCurrency, InvestmentDeviationComment, InvestmentLine, InvestmentStatus, InvestmentsResponse, ManualInvestmentLine, ManualInvestmentLog } from '@mediapulse/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { MetricsService } from '../metrics/metrics.service';
 import { ManualInvestmentDto } from './dto/manual-investment.dto';
@@ -54,8 +54,20 @@ export class InvestmentsService {
       .filter((line) => line.mes === resolvedMes)
       .filter((line) => includeDrafts || line.status === InvestmentStatus.PRESUPUESTO_OK)
       .sort((a, b) => this.sortManualLines(a, b));
+    const latestDeviationComments = await this.manualInvestmentsRepository.findLatestDeviationCommentsByLineIds(lines.map((line) => line.id));
     const totalBudget = lines.reduce((sum, line) => sum + line.presupuesto, 0);
-    const builtLines = lines.map((line) => this.toInvestmentLine(line, totalBudget, days, remainingDayEquivalents, ritmo, rangeStartDate, rangeEndDate, latestConsumptionUpdatedAt, rangeMode));
+    const builtLines = lines.map((line) => this.toInvestmentLine(
+      line,
+      totalBudget,
+      days,
+      remainingDayEquivalents,
+      ritmo,
+      rangeStartDate,
+      rangeEndDate,
+      latestConsumptionUpdatedAt,
+      rangeMode,
+      latestDeviationComments.get(line.id) ?? null
+    ));
     await this.persistConsumptionSnapshots(builtLines);
     const investmentLines = builtLines.map((builtLine) => builtLine.line);
     const consumoTotal = investmentLines.reduce((sum, line) => sum + line.consumo, 0);
@@ -185,6 +197,19 @@ export class InvestmentsService {
     return history;
   }
 
+  async addDeviationComment(id: string, comment: unknown, user?: AuthUser): Promise<InvestmentDeviationComment | null> {
+    await this.hydrateManualLines();
+    if (!this.manualLines.has(id)) return null;
+
+    const cleanComment = typeof comment === 'string' ? comment.trim() : '';
+    if (!cleanComment) throw new BadRequestException('comment is required');
+    if (cleanComment.length > 1000) throw new BadRequestException('comment must be 1000 characters or fewer');
+
+    const saved = await this.manualInvestmentsRepository.insertDeviationComment(id, cleanComment, user);
+    if (!saved) throw new ServiceUnavailableException('Database is required for deviation comments');
+    return saved;
+  }
+
   private toInvestmentLine(
     line: ManualInvestmentLine,
     totalBudget: number,
@@ -194,7 +219,8 @@ export class InvestmentsService {
     startDate: string,
     endDate: string,
     latestConsumptionUpdatedAt: string | null,
-    mode: InvestmentRangeMode
+    mode: InvestmentRangeMode,
+    latestDeviationComment: InvestmentDeviationComment | null
   ): {
     line: InvestmentLine;
     sourceLine: ManualInvestmentLine;
@@ -228,7 +254,8 @@ export class InvestmentsService {
         fcProyectada: this.isSalesObjective(line.objetivo) ? resultadosProyectados * line.tktPromedio : 0,
         consumoRestante,
         porcentajeConsumo,
-        desvio: porcentajeConsumo - ritmo
+        desvio: porcentajeConsumo - ritmo,
+        latestDeviationComment
       },
       sourceLine: line,
       hasMonthlyMetrics,

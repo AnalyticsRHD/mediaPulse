@@ -1,5 +1,5 @@
 import { Injectable, OnApplicationShutdown } from '@nestjs/common';
-import { InvestmentCurrency, InvestmentStatus, ManualInvestmentLine, ManualInvestmentLog } from '@mediapulse/shared';
+import { InvestmentCurrency, InvestmentDeviationComment, InvestmentStatus, ManualInvestmentLine, ManualInvestmentLog } from '@mediapulse/shared';
 import { Pool } from 'pg';
 import { ConfigService } from '../../config/config.service';
 import { AuthUser } from '../auth/auth.types';
@@ -79,6 +79,18 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
         updated_at timestamptz NULL,
         deleted_at timestamptz NULL
       );
+
+      CREATE TABLE IF NOT EXISTS manual_investment_deviation_comments (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        manual_investment_line_id uuid NOT NULL REFERENCES manual_investment_lines(id) ON DELETE CASCADE,
+        comment text NOT NULL,
+        user_id uuid NULL,
+        user_name text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_manual_investment_deviation_comments_line_created
+        ON manual_investment_deviation_comments (manual_investment_line_id, created_at DESC);
     `);
     }
 
@@ -303,6 +315,54 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
     return result.rows.map((row) => this.toManualLog(row));
   }
 
+  async insertDeviationComment(lineId: string, comment: string, user?: AuthUser | null): Promise<InvestmentDeviationComment | null> {
+    if (!(await this.init()) || !this.pool) return null;
+
+    const result = await this.pool.query(
+      `
+        INSERT INTO manual_investment_deviation_comments (
+          manual_investment_line_id,
+          comment,
+          user_id,
+          user_name
+        )
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, manual_investment_line_id, comment, user_id, user_name, created_at;
+      `,
+      [lineId, comment, user?.id || null, user?.name || 'Sistema']
+    );
+
+    return this.toDeviationComment(result.rows[0]);
+  }
+
+  async findLatestDeviationCommentsByLineIds(lineIds: string[]): Promise<Map<string, InvestmentDeviationComment>> {
+    const latestComments = new Map<string, InvestmentDeviationComment>();
+    if (lineIds.length === 0 || !(await this.init()) || !this.pool) return latestComments;
+
+    const result = await this.pool.query(
+      `
+        SELECT DISTINCT ON (manual_investment_line_id)
+          id,
+          manual_investment_line_id,
+          comment,
+          user_id,
+          user_name,
+          created_at
+        FROM manual_investment_deviation_comments
+        WHERE manual_investment_line_id = ANY($1::uuid[])
+        ORDER BY manual_investment_line_id, created_at DESC;
+      `,
+      [lineIds]
+    );
+
+    result.rows.forEach((row) => {
+      const comment = this.toDeviationComment(row);
+      latestComments.set(comment.manualInvestmentLineId, comment);
+    });
+
+    return latestComments;
+  }
+
   async onApplicationShutdown(): Promise<void> {
     await this.pool?.end();
   }
@@ -344,6 +404,17 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : new Date().toISOString(),
       updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null,
       deletedAt: row.deleted_at ? new Date(String(row.deleted_at)).toISOString() : null
+    };
+  }
+
+  private toDeviationComment(row: Record<string, unknown>): InvestmentDeviationComment {
+    return {
+      id: String(row.id),
+      manualInvestmentLineId: String(row.manual_investment_line_id),
+      comment: String(row.comment || ''),
+      userId: row.user_id ? String(row.user_id) : null,
+      userName: String(row.user_name || 'Sistema'),
+      createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : new Date().toISOString()
     };
   }
 

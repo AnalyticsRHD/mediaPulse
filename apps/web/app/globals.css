@@ -506,6 +506,7 @@ h2 {
 
 .deviation-cell {
   font-weight: 800;
+  padding: 0;
 }
 
 .deviation-cell.good {
@@ -521,6 +522,37 @@ h2 {
 .deviation-cell.danger {
   background: #e26464;
   color: #fff;
+}
+
+.deviation-button {
+  width: 100%;
+  min-height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.deviation-button:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.deviation-button:focus-visible {
+  outline: 2px solid #0f4f4f;
+  outline-offset: -3px;
+}
+
+.comment-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55);
 }
 
 .table-wrap {
@@ -1929,6 +1961,7 @@ tfoot td {
   min-height: 28px;
   border: 0;
   border-radius: 4px;
+  background: #0f4f4f;
   color: #fff;
   cursor: pointer;
   font-size: 11px;
@@ -1949,7 +1982,8 @@ tfoot td {
   opacity: 0.7;
 }
 
-.previous-values-modal {
+.previous-values-modal,
+.deviation-comment-modal {
   width: min(620px, 100%);
   max-height: min(720px, calc(100vh - 40px));
   display: grid;
@@ -1979,7 +2013,8 @@ tfoot td {
   margin-top: 2px;
 }
 
-.previous-values-modal p {
+.previous-values-modal p,
+.deviation-comment-modal > p {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
@@ -2009,6 +2044,64 @@ tfoot td {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.deviation-comment-modal {
+  width: min(560px, 100%);
+}
+
+.latest-comment-preview {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #d5eadc;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.latest-comment-preview span,
+.deviation-comment-field {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.latest-comment-preview p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.latest-comment-preview small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.deviation-comment-field {
+  display: grid;
+  gap: 8px;
+}
+
+.deviation-comment-field textarea {
+  min-height: 130px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.45;
+  padding: 10px;
+  text-transform: none;
+}
+
+.deviation-comment-field textarea:focus {
+  border-color: #0f4f4f;
+  outline: 2px solid rgba(15, 79, 79, 0.16);
 }
 
 .history-line-summary {

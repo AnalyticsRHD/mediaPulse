@@ -47,6 +47,15 @@ export interface ManualInvestmentLog {
   deletedAt: string | null;
 }
 
+export interface InvestmentDeviationComment {
+  id: string;
+  manualInvestmentLineId: string;
+  comment: string;
+  userId: string | null;
+  userName: string;
+  createdAt: string;
+}
+
 export interface InvestmentLine extends ManualInvestmentLine {
   consumo: number;
   consumoDia: number;
@@ -59,6 +68,7 @@ export interface InvestmentLine extends ManualInvestmentLine {
   consumoRestante: number;
   porcentajeConsumo: number;
   desvio: number;
+  latestDeviationComment?: InvestmentDeviationComment | null;
 }
 
 export interface InvestmentSummary {
