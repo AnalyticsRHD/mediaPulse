@@ -62,6 +62,7 @@ type SortKey =
   | 'consumoRestante'
   | 'nuevoPresupuestoDiario'
   | 'desvio'
+  | 'consumoAyer'
   | 'consumoDia'
   | 'resultadosProyectados'
   | 'fcProyectada';
@@ -274,7 +275,8 @@ const sortLabels: Record<SortKey, string> = {
   consumoRestante: 'Consumo restante mensual',
   nuevoPresupuestoDiario: 'Nuevo presupuesto diario',
   desvio: 'Desvio',
-  consumoDia: 'Consumo ayer',
+  consumoAyer: 'Consumo de ayer',
+  consumoDia: 'Consumo diario actual',
   resultadosProyectados: 'Resultados proyectados',
   fcProyectada: 'FC proyectada'
 };
@@ -317,6 +319,10 @@ function getConsumoDiaLabel(preset: DatePreset) {
   if (preset === 'today' || preset === 'thisMonth') return 'Consumo diario actual';
   if (preset === 'yesterday') return 'Consumo ayer';
   return 'Consumo dia';
+}
+
+function shouldShowYesterdayConsumption(preset: DatePreset) {
+  return preset === 'today' || preset === 'thisMonth';
 }
 
 const integer = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 });
@@ -464,6 +470,7 @@ type ControlCurrencyTotal = {
   consumo: number;
   consumoRestante: number;
   nuevoPresupuestoDiario: number;
+  consumoAyer: number;
   consumoDia: number;
 };
 
@@ -565,6 +572,7 @@ function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal
       consumo: 0,
       consumoRestante: 0,
       nuevoPresupuestoDiario: 0,
+      consumoAyer: 0,
       consumoDia: 0
     };
 
@@ -574,6 +582,7 @@ function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal
       consumo: current.consumo + line.consumo,
       consumoRestante: current.consumoRestante + line.consumoRestante,
       nuevoPresupuestoDiario: current.nuevoPresupuestoDiario + line.nuevoPresupuestoDiario,
+      consumoAyer: current.consumoAyer + line.consumoAyer,
       consumoDia: current.consumoDia + line.consumoDia
     });
   });
@@ -774,6 +783,11 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const manualPreviewMonthFinished = isFinishedMonth(previewMonth);
   const canEditManualPreview = canManageManualLines && !manualPreviewMonthFinished;
   const syncRunning = syncing || consumptionSyncStatus?.status === 'running';
+  const showYesterdayConsumption = shouldShowYesterdayConsumption(datePreset);
+  const controlSortEntries = useMemo(
+    () => Object.entries(sortLabels).filter(([key]) => showYesterdayConsumption || key !== 'consumoAyer'),
+    [showYesterdayConsumption]
+  );
 
   async function requestJson<T>(url: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
     const headers = new Headers(options?.headers);
@@ -1031,6 +1045,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     setOpenControlFilter(null);
     setOpenSelectId(null);
   }, [viewAs]);
+
+  useEffect(() => {
+    if (!showYesterdayConsumption && controlSort?.key === 'consumoAyer') {
+      setControlSort(null);
+    }
+  }, [showYesterdayConsumption, controlSort?.key]);
 
   useEffect(() => {
     if (!authToken) return;
@@ -1498,7 +1518,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     onChange={(value) => setControlFilters((current) => ({ ...current, objetivo: value }))}
                   />
                   <th>Campaña</th>
-                  {Object.entries(sortLabels).map(([key, label]) => (
+                  {controlSortEntries.map(([key, label]) => (
                     <SortHeader
                       key={key}
                       label={key === 'consumoDia' ? getConsumoDiaLabel(datePreset) : label}
@@ -1537,6 +1557,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         {line.latestDeviationComment ? <span className="comment-dot" aria-hidden="true"></span> : null}
                       </button>
                     </td>
+                    {showYesterdayConsumption ? (
+                      <td>{formatMoney(line.consumoAyer, line.moneda)}</td>
+                    ) : null}
                     <td>{formatMoney(line.consumoDia, line.moneda)}</td>
                     <td>{integer.format(line.resultadosProyectados)}</td>
                     <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
@@ -1549,7 +1572,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 ))}
                 {!loading && filteredControlLines.length === 0 ? (
                   <tr>
-                    <td colSpan={15} className="empty">No hay inversiones cargadas para este mes.</td>
+                    <td colSpan={showYesterdayConsumption ? 16 : 15} className="empty">No hay inversiones cargadas para este mes.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -1564,6 +1587,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       <td className={total.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(total.consumoRestante, total.moneda)}</td>
                       <td>{formatMoney(total.nuevoPresupuestoDiario, total.moneda)}</td>
                       <td></td>
+                      {showYesterdayConsumption ? (
+                        <td>{formatMoney(total.consumoAyer, total.moneda)}</td>
+                      ) : null}
                       <td>{formatMoney(total.consumoDia, total.moneda)}</td>
                       <td colSpan={3}></td>
                     </tr>

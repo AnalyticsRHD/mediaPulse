@@ -228,6 +228,11 @@ export class InvestmentsService {
     hasDailyMetrics: boolean;
   } {
     const { consumo, consumoDia, hasMonthlyMetrics, hasDailyMetrics } = this.getConsumptionSnapshot(line, startDate, endDate, mode);
+    const consumoAyer = this.getDailyConsumptionSnapshot(
+      line,
+      this.addDays(this.getConsumoDiaDate(mode, endDate), -1),
+      false
+    ).consumo;
     const share = totalBudget > 0 ? line.presupuesto / totalBudget : 0;
     const porcentajeConsumo = line.presupuesto > 0 ? consumo / line.presupuesto : 0;
     const resultadosProyectados = this.getProjectedResults(line);
@@ -246,7 +251,7 @@ export class InvestmentsService {
         ...line,
         consumo,
         consumoDia,
-        consumoAyer: consumoDia,
+        consumoAyer,
         presupuestoDaily: days > 0 ? line.presupuesto / days : 0,
         nuevoPresupuestoDiario,
         share,
@@ -834,6 +839,12 @@ export class InvestmentsService {
     );
 
     return this.formatOperationalDate(new Date(todayStart - MILLISECONDS_PER_DAY));
+  }
+
+  private addDays(date: string, days: number): string {
+    const value = new Date(`${date}T00:00:00.000Z`);
+    value.setUTCDate(value.getUTCDate() + days);
+    return value.toISOString().slice(0, 10);
   }
 
   private currentMonth(): string {
