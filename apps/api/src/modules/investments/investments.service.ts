@@ -246,7 +246,7 @@ export class InvestmentsService {
     const consumoDiaSnapshot = this.getDailyConsumptionSnapshot(
       line,
       this.getConsumoDiaDate(mode, endDate),
-      mode !== 'today' && mode !== 'custom'
+      mode === 'thisMonth' || mode === 'today'
     );
     const consumoDia = consumoDiaSnapshot.consumo;
     const isSingleDayRange = startDate === endDate;
@@ -347,6 +347,9 @@ export class InvestmentsService {
 
     const dailyBaseMetrics = this.getDailyMetricBaseCandidates(line, date, date);
     if (dailyBaseMetrics.length === 0) {
+      if (line.lastConsumoHoyDate === date && useFallback) {
+        return { consumo: line.lastConsumoHoy || 0, hasMetrics: true };
+      }
       if (!this.canUseStoredConsumptionFallback(line) || !useFallback) {
         return { consumo: 0, hasMetrics: false };
       }
@@ -356,8 +359,11 @@ export class InvestmentsService {
       return { consumo: 0, hasMetrics: false };
     }
 
-    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics, useFallback);
+    const dailyMetrics = this.getMatchedMetricsWithFallback(line, dailyBaseMetrics, true);
     if (dailyMetrics.length === 0) {
+      if (line.lastConsumoHoyDate === date && useFallback) {
+        return { consumo: line.lastConsumoHoy || 0, hasMetrics: true };
+      }
       if (!this.canUseStoredConsumptionFallback(line)) {
         return { consumo: 0, hasMetrics: false };
       }
@@ -378,6 +384,12 @@ export class InvestmentsService {
     const snapshot = this.getDailyConsumptionSnapshot(line, today, false);
 
     if (!snapshot.hasMetrics) {
+      if (line.lastConsumoHoyDate === today) {
+        return {
+          lastConsumoHoy: line.lastConsumoHoy || 0,
+          lastConsumoHoyDate: today
+        };
+      }
       if (!this.canUseStoredConsumptionFallback(line)) {
         return {
           lastConsumoHoy: 0,
@@ -450,10 +462,13 @@ export class InvestmentsService {
     return this.safeMetrics()
       .filter((metric) => (
         (metric.granularity || 'daily') === 'monthly'
-        && this.normalizeReference(metric.cliente) === lineClient
-        && this.normalizeReference(metric.marca) === lineBrand
         && this.normalizePlatform(metric.plataforma) === this.normalizePlatform(line.plataforma)
         && metric.date.startsWith(line.mes)
+        && (
+          (this.normalizeReference(metric.cliente) === lineClient && this.normalizeReference(metric.marca) === lineBrand)
+          || this.normalizeReference(metric.referencia || '') === lineBrand
+          || this.normalizeReference(metric.referencia || '') === lineClient
+        )
       ));
   }
 
@@ -510,11 +525,14 @@ export class InvestmentsService {
     return this.safeMetrics()
       .filter((metric) => (
         (metric.granularity || 'daily') === 'daily'
-        && this.normalizeReference(metric.cliente) === lineClient
-        && this.normalizeReference(metric.marca) === lineBrand
         && this.normalizePlatform(metric.plataforma) === this.normalizePlatform(line.plataforma)
         && metric.date >= startDate
         && metric.date <= endDate
+        && (
+          (this.normalizeReference(metric.cliente) === lineClient && this.normalizeReference(metric.marca) === lineBrand)
+          || this.normalizeReference(metric.referencia || '') === lineBrand
+          || this.normalizeReference(metric.referencia || '') === lineClient
+        )
       ));
   }
 

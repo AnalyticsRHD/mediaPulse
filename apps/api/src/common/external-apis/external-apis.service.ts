@@ -564,67 +564,73 @@ export class ExternalApisService {
       const campaignNames = new Map<string, string>();
 
       for (const advertiserId of advertiserIds) {
-        const advertiserCampaignNames = await this.fetchTikTokCampaignNames(accessToken, advertiserId);
-        for (const [campaignId, campaignName] of advertiserCampaignNames.entries()) {
-          campaignNames.set(`${advertiserId}:${campaignId}`, campaignName);
-        }
-
-        let page = 1;
-        let totalPages = 1;
-
-        do {
-          const response = await axios.get(
-            `${this.configService.tiktokApiBaseUrl}/report/integrated/get/`,
-            {
-              headers: { 'Access-Token': accessToken },
-              params: {
-                advertiser_id: advertiserId,
-                report_type: 'BASIC',
-                data_level: 'AUCTION_CAMPAIGN',
-                dimensions: JSON.stringify(['stat_time_day', 'campaign_id']),
-                metrics: JSON.stringify(['spend']),
-                start_date: startDate,
-                end_date: endDate,
-                page,
-                page_size: 1000
-              },
-              timeout: this.configService.tiktokSyncTimeoutSeconds * 1000
-            }
-          );
-
-          const data = response.data;
-          if (data?.code !== undefined && data.code !== 0) {
-            throw new BadGatewayException(`TikTok sync failed (${data.message || `code ${data.code}`})`);
+        try {
+          const advertiserCampaignNames = await this.fetchTikTokCampaignNames(accessToken, advertiserId);
+          for (const [campaignId, campaignName] of advertiserCampaignNames.entries()) {
+            campaignNames.set(`${advertiserId}:${campaignId}`, campaignName);
           }
 
-          const list = data?.data?.list || [];
-          totalPages = Number(data?.data?.page_info?.total_page || 1) || 1;
+          let page = 1;
+          let totalPages = 1;
 
-          for (const item of list) {
-            const dimensions = item.dimensions || item.dimension || item;
-            const metrics = item.metrics || item.metric || item;
-            const rawDate = String(dimensions.stat_time_day || dimensions.stat_time || startDate);
-            const bucketDate = scope === 'monthly' ? this.monthStart(rawDate) : rawDate.slice(0, 10);
-            const reportedAdvertiserId = String(dimensions.advertiser_id || advertiserId);
-            const accountName = advertiserNames.get(reportedAdvertiserId) || advertiserNames.get(String(advertiserId)) || String(advertiserId);
-            const campaignId = String(dimensions.campaign_id || dimensions.campaignId || `${advertiserId}-${page}`);
-            const campaignName = String(
-              dimensions.campaign_name
-              || dimensions.campaignName
-              || item.campaign_name
-              || campaignNames.get(`${advertiserId}:${campaignId}`)
-              || campaignNames.get(`${reportedAdvertiserId}:${campaignId}`)
-              || campaignId
+          do {
+            const response = await axios.get(
+              `${this.configService.tiktokApiBaseUrl}/report/integrated/get/`,
+              {
+                headers: { 'Access-Token': accessToken },
+                params: {
+                  advertiser_id: advertiserId,
+                  report_type: 'BASIC',
+                  data_level: 'AUCTION_CAMPAIGN',
+                  dimensions: JSON.stringify(['stat_time_day', 'campaign_id']),
+                  metrics: JSON.stringify(['spend']),
+                  start_date: startDate,
+                  end_date: endDate,
+                  page,
+                  page_size: 1000
+                },
+                timeout: this.configService.tiktokSyncTimeoutSeconds * 1000
+              }
             );
-            const objetivo = this.inferObjective(campaignName);
-            const key = `${bucketDate}||${advertiserId}||${accountName}||${campaignId}||${campaignName}||${objetivo || ''}`;
-            const existing = aggregated.get(key) ?? { advertiserId, accountName, campaignId, campaignName, objetivo, spend: 0 };
-            existing.spend += this.numberValue(metrics.spend ?? item.spend);
-            aggregated.set(key, existing);
-          }
 
-          page += 1;
-        } while (page <= totalPages);
+            const data = response.data;
+            if (data?.code !== undefined && data.code !== 0) {
+              throw new BadGatewayException(`TikTok sync failed for advertiser ${advertiserId} (${data.message || `code ${data.code}`})`);
+            }
+
+            const list = data?.data?.list || [];
+            totalPages = Number(data?.data?.page_info?.total_page || 1) || 1;
+
+            for (const item of list) {
+              const dimensions = item.dimensions || item.dimension || item;
+              const metrics = item.metrics || item.metric || item;
+              const rawDate = String(dimensions.stat_time_day || dimensions.stat_time || startDate);
+              const bucketDate = scope === 'monthly' ? this.monthStart(rawDate) : rawDate.slice(0, 10);
+              const reportedAdvertiserId = String(dimensions.advertiser_id || advertiserId);
+              const accountName = advertiserNames.get(reportedAdvertiserId) || advertiserNames.get(String(advertiserId)) || String(advertiserId);
+              const campaignId = String(dimensions.campaign_id || dimensions.campaignId || `${advertiserId}-${page}`);
+              const campaignName = String(
+                dimensions.campaign_name
+                || dimensions.campaignName
+                || item.campaign_name
+                || campaignNames.get(`${advertiserId}:${campaignId}`)
+                || campaignNames.get(`${reportedAdvertiserId}:${campaignId}`)
+                || campaignId
+              );
+              const objetivo = this.inferObjective(campaignName);
+              const key = `${bucketDate}||${advertiserId}||${accountName}||${campaignId}||${campaignName}||${objetivo || ''}`;
+              const existing = aggregated.get(key) ?? { advertiserId, accountName, campaignId, campaignName, objetivo, spend: 0 };
+              existing.spend += this.numberValue(metrics.spend ?? item.spend);
+              aggregated.set(key, existing);
+            }
+
+            page += 1;
+          } while (page <= totalPages);
+        } catch (error) {
+          const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : (error instanceof Error ? error.message : String(error));
+          this.logger.warn(`TikTok advertiser ${advertiserId} sync skipped: ${detail}`);
+          continue;
+        }
       }
 
       const out: DailyMetrics[] = [];
@@ -632,8 +638,18 @@ export class ExternalApisService {
 
       for (const [key, value] of aggregated.entries()) {
         const [metricDate] = key.split('||');
-        const referencia = this.inferReference(value.accountName) || value.accountName || value.advertiserId;
-        const mapping = await this.brandMappingService.resolve(referencia);
+        const accountReference = this.inferReference(value.accountName) || value.accountName || value.advertiserId;
+        const campaignReference = this.inferReference(value.campaignName) || value.campaignName || '';
+        let referencia = accountReference;
+        let mapping = await this.brandMappingService.resolve(referencia);
+
+        if (mapping.cliente === 'SIN MAPEO' && campaignReference) {
+          const campaignMapping = await this.brandMappingService.resolve(campaignReference);
+          if (campaignMapping.cliente !== 'SIN MAPEO') {
+            mapping = campaignMapping;
+            referencia = campaignReference;
+          }
+        }
 
         out.push({
           date: metricDate,

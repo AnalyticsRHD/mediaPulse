@@ -248,9 +248,27 @@ export class MetricsService {
 
     try {
       const results = await Promise.all([
-        ...sources.map((currentSource) => this.safeSyncAdsSource(currentSource, 'monthly', safeEndDate)),
+        ...sources.map(async (currentSource) => {
+          const backup = this.backupMetricsForSync(currentSource, 'monthly', safeEndDate);
+          this.clearMetricsForSync(currentSource, 'monthly', safeEndDate);
+
+          const result = await this.safeSyncAdsSource(currentSource, 'monthly', safeEndDate);
+          if ('status' in result && result.status === 'failed') {
+            this.restoreMetricsBackup(backup);
+          }
+          return result;
+        }),
         ...sources.flatMap((currentSource) => (
-          dates.map((date) => this.safeSyncAdsSource(currentSource, 'daily', date))
+          dates.map(async (date) => {
+            const backup = this.backupMetricsForSync(currentSource, 'daily', date);
+            this.clearMetricsForSync(currentSource, 'daily', date);
+
+            const result = await this.safeSyncAdsSource(currentSource, 'daily', date);
+            if ('status' in result && result.status === 'failed') {
+              this.restoreMetricsBackup(backup);
+            }
+            return result;
+          })
         ))
       ]);
       const response = {
@@ -370,6 +388,78 @@ export class MetricsService {
 
   private getAllAdsSources(): AdsMetricsSource[] {
     return ['google', 'meta', 'linkedin', 'tiktok', 'mercadolibre'];
+  }
+
+  private getPlatformForAdsSource(source: AdsMetricsSource): string {
+    switch (source) {
+      case 'google': return 'Google';
+      case 'meta': return 'META';
+      case 'tiktok': return 'TikTok';
+      case 'mercadolibre': return 'MELI';
+      case 'linkedin': return 'LinkedIn';
+      default: return source;
+    }
+  }
+
+  private normalizePlatform(platform: string): string {
+    const value = platform.trim().toLowerCase();
+    if (value === 'meta' || value === 'facebook ads' || value === 'facebook') return 'META';
+    if (value === 'google' || value === 'google ads') return 'Google';
+    if (value === 'merc. libre' || value === 'mercado libre' || value === 'm.libre' || value === 'meli') return 'MELI';
+    if (value === 'tiktok' || value === 'tik tok') return 'TikTok';
+    if (value === 'linkedin') return 'LinkedIn';
+    return platform.trim();
+  }
+
+  private removeMetrics(predicate: (metric: DailyMetrics) => boolean): void {
+    for (const [id, metric] of this.metrics.entries()) {
+      if (predicate(metric)) this.metrics.delete(id);
+    }
+  }
+
+  private backupMetricsForSync(source: AdsMetricsSource, scope: SupermetricsScope, date: string): DailyMetrics[] {
+    const platform = this.getPlatformForAdsSource(source);
+    if (scope === 'daily') {
+      return Array.from(this.metrics.values()).filter((metric) =>
+        this.normalizePlatform(metric.plataforma) === platform
+        && (metric.granularity || 'daily') === 'daily'
+        && metric.date === date
+      );
+    }
+
+    const monthDate = this.monthStart(date);
+    return Array.from(this.metrics.values()).filter((metric) =>
+      this.normalizePlatform(metric.plataforma) === platform
+      && (metric.granularity || 'daily') === 'monthly'
+      && metric.date === monthDate
+    );
+  }
+
+  private restoreMetricsBackup(metrics: DailyMetrics[]): void {
+    for (const metric of metrics) {
+      if (metric.id) {
+        this.metrics.set(metric.id, metric);
+      }
+    }
+  }
+
+  private clearMetricsForSync(source: AdsMetricsSource, scope: SupermetricsScope, date: string): void {
+    const platform = this.getPlatformForAdsSource(source);
+    if (scope === 'daily') {
+      this.removeMetrics((metric) =>
+        this.normalizePlatform(metric.plataforma) === platform
+        && (metric.granularity || 'daily') === 'daily'
+        && metric.date === date
+      );
+      return;
+    }
+
+    const monthDate = this.monthStart(date);
+    this.removeMetrics((metric) =>
+      this.normalizePlatform(metric.plataforma) === platform
+      && (metric.granularity || 'daily') === 'monthly'
+      && metric.date === monthDate
+    );
   }
 
   private isSupermetricsSource(source: AdsMetricsSource): source is SupermetricsSource {
