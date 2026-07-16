@@ -1,5 +1,6 @@
 import { Injectable, OnApplicationShutdown } from '@nestjs/common';
 import { Pool } from 'pg';
+import { closeSharedDatabasePool, getSharedDatabasePool } from '../../config/database-pool';
 import { ConfigService } from '../../config/config.service';
 import type { BrandMapping } from './brand-mapping.service';
 
@@ -21,10 +22,7 @@ export class BrandMappingRepository implements OnApplicationShutdown {
     if (!this.configService.databaseUrl) return false;
 
     const dbConfig = this.configService.database;
-    this.pool = new Pool({
-      connectionString: dbConfig.url,
-      ssl: dbConfig.ssl
-    });
+    this.pool = getSharedDatabasePool(dbConfig);
 
     if (dbConfig.synchronize) {
       await this.pool.query(`
@@ -117,6 +115,6 @@ export class BrandMappingRepository implements OnApplicationShutdown {
   }
 
   async onApplicationShutdown(): Promise<void> {
-    await this.pool?.end();
+    await closeSharedDatabasePool();
   }
 }

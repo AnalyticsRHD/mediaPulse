@@ -34,11 +34,17 @@ const allObjectiveOptions = uniqueValues([
   ))
 ]);
 const GENERAL_VIEW = 'general';
+const inactiveClientNames = [
+  'BACCHETTI',
+  'BACHETTI',
+  'CASA BACCHETTII ZANOTTI',
+  'CASA BACHETTI ZANOTTI',
+  'ORMIFLEX',
+  'LP'
+];
 const viewAsClients: Record<string, string[]> = {
   'florencia@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA', 'PAMPA BAY', 'IMQ'],
-  // Clientes pausados: 'LP', 'ORMIFLEX'
   'francisco@redhookdata.com': ['WORLD SPORT', 'BINDER RULEMANES', 'RP', 'RHD'],
-  // Clientes pausados: 'LP', 'ORMIFLEX'
   'franco@redhookdata.com': ['PAMPA BAY', 'IMQ', 'BINDER RULEMANES', 'RP'],
   'sabrina@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA', 'WORLD SPORT']
 };
@@ -433,6 +439,11 @@ function normalizeClientName(value: string) {
   return value.trim().toUpperCase();
 }
 
+function isInactiveClient(value: string) {
+  const inactiveClients = new Set(inactiveClientNames.map(normalizeClientName));
+  return inactiveClients.has(normalizeClientName(value));
+}
+
 function getViewAllowedClients(viewAs: string): Set<string> | null {
   const clients = viewAsClients[viewAs];
   if (!clients) return null;
@@ -698,12 +709,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const viewAllowedClients = useMemo(() => getViewAllowedClients(viewAs), [viewAs]);
   const clients = useMemo(
     () => (brandClients.length > 0 ? brandClients : Object.keys(brandCatalog).sort())
+      .filter((cliente) => !isInactiveClient(cliente))
       .filter((cliente) => !viewAllowedClients || viewAllowedClients.has(normalizeClientName(cliente))),
     [brandCatalog, brandClients, viewAllowedClients]
   );
   const scopedBrandCatalog = useMemo(() => (
     Object.entries(brandCatalog).reduce<Record<string, string[]>>((acc, [cliente, marcas]) => {
-      if (!viewAllowedClients || viewAllowedClients.has(normalizeClientName(cliente))) {
+      if (!isInactiveClient(cliente) && (!viewAllowedClients || viewAllowedClients.has(normalizeClientName(cliente)))) {
         acc[cliente] = marcas;
       }
       return acc;

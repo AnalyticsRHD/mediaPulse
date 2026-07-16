@@ -688,25 +688,12 @@ export class ExternalApisService {
   }
 
   async fetchMercadoLibreMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
-    // Try API first, then web scraping, then fallback to Google Sheets raw data.
     try {
-      const apiMetrics = await this.fetchMercadoLibreApiMetrics(scope, date);
-      if (apiMetrics.length > 0 || scope === 'daily') return apiMetrics;
+      return await this.fetchMercadoLibreApiMetrics(scope, date);
     } catch (error) {
-      this.logger.warn(`Mercado Libre API sync failed, will try web/sheets fallback: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(`Mercado Libre API ${scope} sync returned no metrics: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
     }
-
-    try {
-      const webMetrics = await this.fetchMercadoLibreWebMetrics(scope, date);
-      if (webMetrics.length > 0) return webMetrics;
-    } catch (error) {
-      this.logger.warn(`Mercado Libre web sync failed, will try sheets fallback: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    const sheetMetrics = await this.fetchMercadoLibreSheetMetrics(scope, date);
-    if (sheetMetrics.length > 0) return sheetMetrics;
-
-    throw new ServiceUnavailableException('Mercado Libre did not return investment metrics from API, web or sheets');
   }
 
   private async fetchMercadoLibreWebMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
@@ -815,6 +802,7 @@ export class ExternalApisService {
           Origin: 'https://ads.mercadolibre.com.ar',
           Referer: `https://ads.mercadolibre.com.ar/hub/summary?advertiserId=${encodeURIComponent(advertiserId)}`,
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149 Safari/537.36',
+          'Csrf-Token': csrfToken,
           'csrf-token': csrfToken,
           'x-csrf-token': csrfToken
         },
@@ -859,49 +847,67 @@ export class ExternalApisService {
 
       for (const advertiser of advertisers) {
         if (includeProductAds) {
-          const campaigns = await this.fetchMercadoLibreCampaigns(accessToken, advertiser.id, startDate, endDate);
+          try {
+            const cookie = this.configService.mercadoLibreWebCookie;
+            const csrfToken = this.configService.mercadoLibreWebCsrfToken;
+            if (!cookie || !csrfToken) {
+              throw new ServiceUnavailableException('Mercado Libre web cookie/csrf token not configured for PADS metrics');
+            }
 
-          for (const campaign of campaigns) {
-            this.addMercadoLibreSpend(
-              aggregated,
-              advertiser,
-              scope,
-              endDate,
-              campaign,
-              this.numberValue(
-                campaign.cost
-                ?? campaign.spend
-                ?? campaign.investment
-                ?? campaign.amount
-                ?? campaign.metrics?.cost
-                ?? campaign.metrics?.spend
-              )
-            );
-          }
-        }
-
-        if (includeDisplay) {
-          const campaigns = await this.fetchMercadoLibreDisplayCampaigns(accessToken, advertiser.id);
-
-          for (const campaign of campaigns) {
-            const metricRows = await this.fetchMercadoLibreDisplayCampaignMetrics(
-              accessToken,
+            const productMetrics = await this.fetchMercadoLibreWebProductMetrics(
               advertiser.id,
-              String(campaign.id),
+              'PADS',
               startDate,
-              endDate
+              endDate,
+              cookie,
+              csrfToken
             );
+            const investment = productMetrics.find((row) => String(row.name || '').toLowerCase() === 'investment');
+            const spend = this.numberValue(investment?.value);
 
-            for (const metricRow of metricRows) {
+            if (spend > 0) {
               this.addMercadoLibreSpend(
                 aggregated,
                 advertiser,
                 scope,
                 endDate,
-                metricRow,
-                this.numberValue(metricRow.consumed_budget)
+                { date: endDate },
+                spend
               );
             }
+          } catch (error) {
+            const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : error instanceof Error ? error.message : String(error);
+            this.logger.warn(`Mercado Libre PADS ${scope} sync skipped for advertiser ${advertiser.id}: ${detail}`);
+          }
+        }
+
+        if (includeDisplay) {
+          try {
+            const campaigns = await this.fetchMercadoLibreDisplayCampaigns(accessToken, advertiser.id);
+
+            for (const campaign of campaigns) {
+              const metricRows = await this.fetchMercadoLibreDisplayCampaignMetrics(
+                accessToken,
+                advertiser.id,
+                String(campaign.id),
+                startDate,
+                endDate
+              );
+
+              for (const metricRow of metricRows) {
+                this.addMercadoLibreSpend(
+                  aggregated,
+                  advertiser,
+                  scope,
+                  endDate,
+                  metricRow,
+                  this.numberValue(metricRow.consumed_budget)
+                );
+              }
+            }
+          } catch (error) {
+            const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : error instanceof Error ? error.message : String(error);
+            this.logger.warn(`Mercado Libre DSP ${scope} sync skipped for advertiser ${advertiser.id}: ${detail}`);
           }
         }
       }

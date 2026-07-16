@@ -1,6 +1,7 @@
 import { Injectable, OnApplicationShutdown } from '@nestjs/common';
-import { InvestmentCurrency, InvestmentDeviationComment, InvestmentStatus, ManualInvestmentLine, ManualInvestmentLog } from '@mediapulse/shared';
+import { DailyMetrics, InvestmentCurrency, InvestmentDeviationComment, InvestmentStatus, ManualInvestmentLine, ManualInvestmentLog } from '@mediapulse/shared';
 import { Pool } from 'pg';
+import { closeSharedDatabasePool, getSharedDatabasePool } from '../../config/database-pool';
 import { ConfigService } from '../../config/config.service';
 import { AuthUser } from '../auth/auth.types';
 
@@ -24,10 +25,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
     if (!this.configService.databaseUrl) return false;
 
     const dbConfig = this.configService.database;
-    this.pool = new Pool({
-      connectionString: dbConfig.url,
-      ssl: dbConfig.ssl
-    });
+    this.pool = getSharedDatabasePool(dbConfig);
 
     if (dbConfig.synchronize) {
       await this.pool.query(`
@@ -91,6 +89,54 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
 
       CREATE INDEX IF NOT EXISTS idx_manual_investment_deviation_comments_line_created
         ON manual_investment_deviation_comments (manual_investment_line_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS daily_metrics (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        date date NOT NULL,
+        cliente text NOT NULL,
+        marca text NOT NULL,
+        plataforma text NOT NULL,
+        campaign_id text NOT NULL,
+        campaign_name text NOT NULL,
+        ad_set_name text NULL,
+        ad_group_name text NULL,
+        objetivo text NULL,
+        referencia text NULL,
+        account_id text NULL,
+        account_name text NULL,
+        granularity text NOT NULL DEFAULT 'daily',
+        coverage_end_date date NULL,
+        spend numeric NOT NULL DEFAULT 0,
+        impressions numeric NOT NULL DEFAULT 0,
+        clicks numeric NOT NULL DEFAULT 0,
+        conversions numeric NOT NULL DEFAULT 0,
+        revenue numeric NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (date, campaign_id, plataforma, granularity)
+      );
+
+      ALTER TABLE daily_metrics
+        ADD COLUMN IF NOT EXISTS referencia text NULL,
+        ADD COLUMN IF NOT EXISTS account_id text NULL,
+        ADD COLUMN IF NOT EXISTS account_name text NULL,
+        ADD COLUMN IF NOT EXISTS ad_set_name text NULL,
+        ADD COLUMN IF NOT EXISTS ad_group_name text NULL,
+        ADD COLUMN IF NOT EXISTS objetivo text NULL,
+        ADD COLUMN IF NOT EXISTS granularity text NOT NULL DEFAULT 'daily',
+        ADD COLUMN IF NOT EXISTS coverage_end_date date NULL,
+        ADD COLUMN IF NOT EXISTS revenue numeric NULL,
+        ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
+        ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_metrics_unique_key
+        ON daily_metrics (date, campaign_id, plataforma, granularity);
+
+      CREATE INDEX IF NOT EXISTS idx_daily_metrics_date
+        ON daily_metrics (date);
+
+      CREATE INDEX IF NOT EXISTS idx_daily_metrics_platform_granularity_date
+        ON daily_metrics (plataforma, granularity, date);
     `);
     }
 
@@ -237,6 +283,175 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
     return value ? new Date(String(value)).toISOString() : null;
   }
 
+  async findAllDailyMetrics(): Promise<DailyMetrics[]> {
+    if (!(await this.init()) || !this.pool) return [];
+
+    const result = await this.pool.query(`
+      SELECT
+        id,
+        date,
+        cliente,
+        marca,
+        plataforma,
+        campaign_id,
+        campaign_name,
+        ad_set_name,
+        ad_group_name,
+        objetivo,
+        referencia,
+        account_id,
+        account_name,
+        granularity,
+        coverage_end_date,
+        spend,
+        impressions,
+        clicks,
+        conversions,
+        revenue
+      FROM daily_metrics
+      ORDER BY date, plataforma, cliente, marca, campaign_name;
+    `);
+
+    return result.rows.map((row) => this.toDailyMetric(row));
+  }
+
+  async upsertDailyMetric(metric: DailyMetrics): Promise<DailyMetrics | null> {
+    if (!(await this.init()) || !this.pool) return null;
+
+    const id = metric.id || null;
+    const result = await this.pool.query(
+      `
+        INSERT INTO daily_metrics (
+          id,
+          date,
+          cliente,
+          marca,
+          plataforma,
+          campaign_id,
+          campaign_name,
+          ad_set_name,
+          ad_group_name,
+          objetivo,
+          referencia,
+          account_id,
+          account_name,
+          granularity,
+          coverage_end_date,
+          spend,
+          impressions,
+          clicks,
+          conversions,
+          revenue
+        )
+        VALUES (
+          COALESCE($1::uuid, gen_random_uuid()),
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14,
+          $15,
+          $16,
+          $17,
+          $18,
+          $19,
+          $20
+        )
+        ON CONFLICT (date, campaign_id, plataforma, granularity) DO UPDATE SET
+          cliente = EXCLUDED.cliente,
+          marca = EXCLUDED.marca,
+          campaign_name = EXCLUDED.campaign_name,
+          ad_set_name = EXCLUDED.ad_set_name,
+          ad_group_name = EXCLUDED.ad_group_name,
+          objetivo = EXCLUDED.objetivo,
+          referencia = EXCLUDED.referencia,
+          account_id = EXCLUDED.account_id,
+          account_name = EXCLUDED.account_name,
+          coverage_end_date = EXCLUDED.coverage_end_date,
+          spend = EXCLUDED.spend,
+          impressions = EXCLUDED.impressions,
+          clicks = EXCLUDED.clicks,
+          conversions = EXCLUDED.conversions,
+          revenue = EXCLUDED.revenue,
+          updated_at = now()
+        RETURNING
+          id,
+          date,
+          cliente,
+          marca,
+          plataforma,
+          campaign_id,
+          campaign_name,
+          ad_set_name,
+          ad_group_name,
+          objetivo,
+          referencia,
+          account_id,
+          account_name,
+          granularity,
+          coverage_end_date,
+          spend,
+          impressions,
+          clicks,
+          conversions,
+          revenue;
+      `,
+      [
+        id,
+        metric.date,
+        metric.cliente,
+        metric.marca,
+        metric.plataforma,
+        metric.campaignId,
+        metric.campaignName,
+        metric.adSetName || null,
+        metric.adGroupName || null,
+        metric.objetivo || null,
+        metric.referencia || metric.marca || metric.cliente,
+        metric.accountId || null,
+        metric.accountName || null,
+        metric.granularity || 'daily',
+        metric.coverageEndDate || null,
+        metric.spend || 0,
+        metric.impressions || 0,
+        metric.clicks || 0,
+        metric.conversions || 0,
+        metric.revenue ?? null
+      ]
+    );
+
+    return this.toDailyMetric(result.rows[0]);
+  }
+
+  async deleteDailyMetric(id: string): Promise<boolean> {
+    if (!(await this.init()) || !this.pool) return false;
+
+    const result = await this.pool.query('DELETE FROM daily_metrics WHERE id = $1;', [id]);
+    return Boolean(result.rowCount);
+  }
+
+  async deleteDailyMetricsForSync(platform: string, granularity: 'daily' | 'monthly', date: string): Promise<void> {
+    if (!(await this.init()) || !this.pool) return;
+
+    await this.pool.query(
+      `
+        DELETE FROM daily_metrics
+        WHERE plataforma = $1
+          AND granularity = $2
+          AND date = $3;
+      `,
+      [platform, granularity, date]
+    );
+  }
+
   async deleteMany(ids: string[]): Promise<{ deletedCount: number; deletedIds: string[] } | null> {
     if (!(await this.init()) || !this.pool) return null;
 
@@ -364,7 +579,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
   }
 
   async onApplicationShutdown(): Promise<void> {
-    await this.pool?.end();
+    await closeSharedDatabasePool();
   }
 
   private toManualLine(row: Record<string, unknown>): ManualInvestmentLine {
@@ -404,6 +619,31 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : new Date().toISOString(),
       updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null,
       deletedAt: row.deleted_at ? new Date(String(row.deleted_at)).toISOString() : null
+    };
+  }
+
+  private toDailyMetric(row: Record<string, unknown>): DailyMetrics {
+    return {
+      id: String(row.id),
+      date: this.toDateOnly(row.date) || '',
+      cliente: String(row.cliente || ''),
+      marca: String(row.marca || ''),
+      plataforma: String(row.plataforma || ''),
+      campaignId: String(row.campaign_id || ''),
+      campaignName: String(row.campaign_name || ''),
+      adSetName: row.ad_set_name ? String(row.ad_set_name) : undefined,
+      adGroupName: row.ad_group_name ? String(row.ad_group_name) : undefined,
+      objetivo: row.objetivo ? String(row.objetivo) : undefined,
+      referencia: row.referencia ? String(row.referencia) : undefined,
+      accountId: row.account_id ? String(row.account_id) : undefined,
+      accountName: row.account_name ? String(row.account_name) : undefined,
+      granularity: (String(row.granularity || 'daily') === 'monthly' ? 'monthly' : 'daily'),
+      coverageEndDate: this.toDateOnly(row.coverage_end_date) || undefined,
+      spend: Number(row.spend || 0),
+      impressions: Number(row.impressions || 0),
+      clicks: Number(row.clicks || 0),
+      conversions: Number(row.conversions || 0),
+      revenue: row.revenue === null || row.revenue === undefined ? undefined : Number(row.revenue)
     };
   }
 

@@ -1,4 +1,4 @@
-import { BadRequestException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, forwardRef, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { DailyMetrics } from '@mediapulse/shared';
 import { CreateDailyMetricsDto, UpdateDailyMetricsDto } from './dto/create-daily-metrics.dto';
 import { ManualInvestmentsRepository } from '../investments/manual-investments.repository';
@@ -25,7 +25,7 @@ export type MetricsSyncStatus = {
 };
 
 @Injectable()
-export class MetricsService {
+export class MetricsService implements OnModuleInit {
   private readonly logger = new Logger(MetricsService.name);
   private metrics = new Map<string, DailyMetrics>();
   private syncStatuses = new Map<string, MetricsSyncStatus>();
@@ -36,6 +36,21 @@ export class MetricsService {
     @Inject(forwardRef(() => InvestmentsService))
     private readonly investmentsService: InvestmentsService
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      const persistedMetrics = await this.manualInvestmentsRepository.findAllDailyMetrics();
+      this.metrics = new Map(
+        persistedMetrics
+          .filter((metric) => Boolean(metric.id))
+          .map((metric) => [metric.id!, metric])
+      );
+      this.logger.log(`Loaded ${persistedMetrics.length} persisted daily metrics`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Could not load persisted daily metrics: ${message}`);
+    }
+  }
 
   findAll(): DailyMetrics[] {
     return Array.from(this.metrics.values());
@@ -70,6 +85,7 @@ export class MetricsService {
       ...this.normalize(dto as any)
     };
     this.metrics.set(id, metric);
+    void this.persistMetric(metric);
     return metric;
   }
 
@@ -79,11 +95,14 @@ export class MetricsService {
 
     const updated = { ...existing, ...this.normalize(dto as any) };
     this.metrics.set(id, updated);
+    void this.persistMetric(updated);
     return updated;
   }
 
   delete(id: string): boolean {
-    return this.metrics.delete(id);
+    const deleted = this.metrics.delete(id);
+    if (deleted) void this.manualInvestmentsRepository.deleteDailyMetric(id);
+    return deleted;
   }
 
   upsertByDateAndCampaign(date: string, campaignId: string, platform: string, dto: CreateDailyMetricsDto): DailyMetrics {
@@ -250,7 +269,7 @@ export class MetricsService {
       const results = await Promise.all([
         ...sources.map(async (currentSource) => {
           const backup = this.backupMetricsForSync(currentSource, 'monthly', safeEndDate);
-          this.clearMetricsForSync(currentSource, 'monthly', safeEndDate);
+          await this.clearMetricsForSync(currentSource, 'monthly', safeEndDate);
 
           const result = await this.safeSyncAdsSource(currentSource, 'monthly', safeEndDate);
           if ('status' in result && result.status === 'failed') {
@@ -261,7 +280,7 @@ export class MetricsService {
         ...sources.flatMap((currentSource) => (
           dates.map(async (date) => {
             const backup = this.backupMetricsForSync(currentSource, 'daily', date);
-            this.clearMetricsForSync(currentSource, 'daily', date);
+            await this.clearMetricsForSync(currentSource, 'daily', date);
 
             const result = await this.safeSyncAdsSource(currentSource, 'daily', date);
             if ('status' in result && result.status === 'failed') {
@@ -304,7 +323,7 @@ export class MetricsService {
     const metrics = await this.externalApisService.fetchSupermetricsMetrics(source, scope, date);
 
     for (const metric of metrics) {
-      this.upsertByDateAndCampaign(
+      await this.upsertByDateAndCampaignAsync(
         metric.date,
         metric.campaignId,
         metric.plataforma,
@@ -324,7 +343,7 @@ export class MetricsService {
     const metrics = await this.externalApisService.fetchNativeAdsMetrics(source, scope, date);
 
     for (const metric of metrics) {
-      this.upsertByDateAndCampaign(
+      await this.upsertByDateAndCampaignAsync(
         metric.date,
         metric.campaignId,
         metric.plataforma,
@@ -439,11 +458,12 @@ export class MetricsService {
     for (const metric of metrics) {
       if (metric.id) {
         this.metrics.set(metric.id, metric);
+        void this.persistMetric(metric);
       }
     }
   }
 
-  private clearMetricsForSync(source: AdsMetricsSource, scope: SupermetricsScope, date: string): void {
+  private async clearMetricsForSync(source: AdsMetricsSource, scope: SupermetricsScope, date: string): Promise<void> {
     const platform = this.getPlatformForAdsSource(source);
     if (scope === 'daily') {
       this.removeMetrics((metric) =>
@@ -451,6 +471,7 @@ export class MetricsService {
         && (metric.granularity || 'daily') === 'daily'
         && metric.date === date
       );
+      await this.manualInvestmentsRepository.deleteDailyMetricsForSync(platform, 'daily', date);
       return;
     }
 
@@ -460,6 +481,7 @@ export class MetricsService {
       && (metric.granularity || 'daily') === 'monthly'
       && metric.date === monthDate
     );
+    await this.manualInvestmentsRepository.deleteDailyMetricsForSync(platform, 'monthly', monthDate);
   }
 
   private isSupermetricsSource(source: AdsMetricsSource): source is SupermetricsSource {
@@ -523,6 +545,30 @@ export class MetricsService {
       return await this.manualInvestmentsRepository.findLatestConsumptionSyncAt();
     } catch {
       return null;
+    }
+  }
+
+  private async upsertByDateAndCampaignAsync(
+    date: string,
+    campaignId: string,
+    platform: string,
+    dto: CreateDailyMetricsDto
+  ): Promise<DailyMetrics> {
+    const metric = this.upsertByDateAndCampaign(date, campaignId, platform, dto);
+    await this.persistMetric(metric);
+    return metric;
+  }
+
+  private async persistMetric(metric: DailyMetrics): Promise<void> {
+    try {
+      const persisted = await this.manualInvestmentsRepository.upsertDailyMetric(metric);
+      if (persisted?.id && persisted.id !== metric.id) {
+        this.metrics.delete(metric.id || '');
+        this.metrics.set(persisted.id, persisted);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Could not persist metric ${metric.campaignId}: ${message}`);
     }
   }
 }

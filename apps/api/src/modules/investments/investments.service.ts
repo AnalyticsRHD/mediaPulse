@@ -1,4 +1,4 @@
-import { BadRequestException, forwardRef, Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, forwardRef, Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { InvestmentCurrency, InvestmentDeviationComment, InvestmentLine, InvestmentStatus, InvestmentsResponse, ManualInvestmentLine, ManualInvestmentLog } from '@mediapulse/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { MetricsService } from '../metrics/metrics.service';
@@ -13,6 +13,7 @@ type InvestmentRangeMode = 'thisMonth' | 'today' | 'yesterday' | 'previousMonth'
 
 @Injectable()
 export class InvestmentsService {
+  private readonly logger = new Logger(InvestmentsService.name);
   private manualLines = new Map<string, ManualInvestmentLine>();
   private manualLinesHydrated = false;
 
@@ -1065,7 +1066,9 @@ export class InvestmentsService {
       const databaseLines = await this.manualInvestmentsRepository.findAll();
       this.manualLines = new Map(databaseLines.map((line) => [line.id, line]));
       this.manualLinesHydrated = true;
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Could not hydrate manual investment lines: ${message}`, error instanceof Error ? error.stack : undefined);
       this.manualLinesHydrated = false;
       throw new ServiceUnavailableException('No se pudieron cargar las inversiones');
     }
