@@ -38,6 +38,10 @@ export class MetricsService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    await this.reloadPersistedMetrics();
+  }
+
+  async reloadPersistedMetrics(): Promise<void> {
     try {
       const persistedMetrics = await this.manualInvestmentsRepository.findAllDailyMetrics();
       this.metrics = new Map(
@@ -223,8 +227,26 @@ export class MetricsService implements OnModuleInit {
     try {
       const results = await Promise.all(
         sources.flatMap((currentSource) => [
-          this.safeSyncAdsSource(currentSource, 'monthly', monthlyDate),
-          ...dailyDates.map((dailyDate) => this.safeSyncAdsSource(currentSource, 'daily', dailyDate))
+          (async () => {
+            const backup = this.backupMetricsForSync(currentSource, 'monthly', monthlyDate);
+            await this.clearMetricsForSync(currentSource, 'monthly', monthlyDate);
+
+            const result = await this.safeSyncAdsSource(currentSource, 'monthly', monthlyDate);
+            if ('status' in result && result.status === 'failed') {
+              this.restoreMetricsBackup(backup);
+            }
+            return result;
+          })(),
+          ...dailyDates.map(async (dailyDate) => {
+            const backup = this.backupMetricsForSync(currentSource, 'daily', dailyDate);
+            await this.clearMetricsForSync(currentSource, 'daily', dailyDate);
+
+            const result = await this.safeSyncAdsSource(currentSource, 'daily', dailyDate);
+            if ('status' in result && result.status === 'failed') {
+              this.restoreMetricsBackup(backup);
+            }
+            return result;
+          })
         ])
       );
       const response = {

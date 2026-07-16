@@ -33,6 +33,7 @@ export class InvestmentsService {
     mode: InvestmentRangeMode = 'thisMonth'
   ): Promise<InvestmentsResponse> {
     await this.hydrateManualLines();
+    await this.metricsService.reloadPersistedMetrics();
     const safeStartDate = this.ensureDate(startDate, 'startDate');
     const safeEndDate = this.ensureDate(endDate, 'endDate');
     const resolvedMes = this.ensureMonth(mes || safeStartDate.slice(0, 7), 'mes');
