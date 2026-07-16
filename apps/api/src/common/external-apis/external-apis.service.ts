@@ -142,6 +142,10 @@ export class ExternalApisService {
     if (source === 'google') return this.fetchGoogleAdsMetrics(scope, date);
     if (source === 'meta') return this.fetchMetaAdsMetrics(scope, date);
     if (source === 'tiktok') return this.fetchTikTokMetrics(scope, date);
+    if (!this.configService.mercadoLibreSyncEnabled) {
+      this.logger.warn('Mercado Libre sync skipped: MERCADO_LIBRE_SYNC_ENABLED=false');
+      return [];
+    }
     return this.fetchMercadoLibreMetrics(scope, date);
   }
 

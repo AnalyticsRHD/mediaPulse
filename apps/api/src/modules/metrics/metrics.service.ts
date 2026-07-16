@@ -11,6 +11,7 @@ import {
   SupermetricsScope,
   SupermetricsSource
 } from '../../common/external-apis/external-apis.service';
+import { ConfigService } from '../../config/config.service';
 
 const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
 const MAX_SYNC_RANGE_DAYS = 31;
@@ -33,6 +34,7 @@ export class MetricsService implements OnModuleInit {
   constructor(
     private readonly manualInvestmentsRepository: ManualInvestmentsRepository,
     private readonly externalApisService: ExternalApisService,
+    private readonly configService: ConfigService,
     @Inject(forwardRef(() => InvestmentsService))
     private readonly investmentsService: InvestmentsService
   ) {}
@@ -428,7 +430,11 @@ export class MetricsService implements OnModuleInit {
   }
 
   private getAllAdsSources(): AdsMetricsSource[] {
-    return ['google', 'meta', 'linkedin', 'tiktok', 'mercadolibre'];
+    const sources: AdsMetricsSource[] = ['google', 'meta', 'linkedin', 'tiktok'];
+    if (this.configService.mercadoLibreSyncEnabled) {
+      sources.push('mercadolibre');
+    }
+    return sources;
   }
 
   private getPlatformForAdsSource(source: AdsMetricsSource): string {

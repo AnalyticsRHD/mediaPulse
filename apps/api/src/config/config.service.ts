@@ -207,6 +207,10 @@ export class ConfigService {
       .filter(Boolean);
   }
 
+  get mercadoLibreSyncEnabled(): boolean {
+    return (process.env.MERCADO_LIBRE_SYNC_ENABLED || 'true').toLowerCase() !== 'false';
+  }
+
   get mercadoLibreWebCookie(): string {
     return this.cleanPlaceholder(process.env.MERCADO_LIBRE_WEB_COOKIE || '');
   }
