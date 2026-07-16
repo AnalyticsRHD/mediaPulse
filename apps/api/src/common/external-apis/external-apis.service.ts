@@ -844,6 +844,7 @@ export class ExternalApisService {
       const advertisers = configuredAdvertisers.length > 0
         ? configuredAdvertisers
         : await this.fetchMercadoLibreAdvertisers(accessToken);
+      const productAdsFailures: string[] = [];
 
       for (const advertiser of advertisers) {
         if (includeProductAds) {
@@ -863,7 +864,12 @@ export class ExternalApisService {
               csrfToken
             );
             const investment = productMetrics.find((row) => String(row.name || '').toLowerCase() === 'investment');
+            if (!investment) {
+              throw new BadGatewayException(`PADS investment metric missing for advertiser ${advertiser.id}`);
+            }
+
             const spend = this.numberValue(investment?.value);
+            this.logger.log(`Mercado Libre PADS ${scope} advertiser ${advertiser.id} returned spend ${this.round2(spend)}`);
 
             if (spend > 0) {
               this.addMercadoLibreSpend(
@@ -877,6 +883,7 @@ export class ExternalApisService {
             }
           } catch (error) {
             const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : error instanceof Error ? error.message : String(error);
+            productAdsFailures.push(`${advertiser.id}: ${detail}`);
             this.logger.warn(`Mercado Libre PADS ${scope} sync skipped for advertiser ${advertiser.id}: ${detail}`);
           }
         }
@@ -910,6 +917,10 @@ export class ExternalApisService {
             this.logger.warn(`Mercado Libre DSP ${scope} sync skipped for advertiser ${advertiser.id}: ${detail}`);
           }
         }
+      }
+
+      if (includeProductAds && productAdsFailures.length > 0) {
+        throw new BadGatewayException(`Mercado Libre PADS ${scope} sync incomplete (${productAdsFailures.join('; ')})`);
       }
 
       const out: DailyMetrics[] = [];
