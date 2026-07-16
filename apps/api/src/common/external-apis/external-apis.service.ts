@@ -797,15 +797,30 @@ export class ExternalApisService {
     csrfToken: string
   ): Promise<MercadoLibreWebMetricRow[]> {
     const baseUrl = this.configService.mercadoLibreAdsApiBaseUrl.replace(/\/+$/, '');
+    const webOrigin = 'https://ads.mercadolibre.com.ar';
     const response = await axios.get(
       `${baseUrl}/advertiser/${encodeURIComponent(advertiserId)}/product/${encodeURIComponent(productId)}/metrics`,
       {
         headers: {
           Accept: 'application/json, text/plain, */*',
-          Cookie: cookie,
-          Origin: 'https://ads.mercadolibre.com.ar',
-          Referer: `https://ads.mercadolibre.com.ar/hub/summary?advertiserId=${encodeURIComponent(advertiserId)}`,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149 Safari/537.36',
+          'Accept-Language': 'en,en-US;q=0.9,es;q=0.8',
+          'Cache-Control': 'no-cache',
+          Cookie: this.normalizeCookieHeader(cookie),
+          'Device-Memory': '16',
+          Downlink: '10',
+          Dpr: '1.125',
+          Ect: '4g',
+          Origin: webOrigin,
+          Pragma: 'no-cache',
+          Priority: 'u=1, i',
+          Referer: `${webOrigin}/hub/summary?advertiserId=${encodeURIComponent(advertiserId)}`,
+          'Sec-Ch-Ua': '"Not,A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
+          'Sec-Ch-Ua-Mobile': '?0',
+          'Sec-Ch-Ua-Platform': '"Windows"',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-origin',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
           'Csrf-Token': csrfToken,
           'csrf-token': csrfToken,
           'x-csrf-token': csrfToken
@@ -822,6 +837,14 @@ export class ExternalApisService {
 
     if (response.status === 400 || response.status === 404) return [];
     return Array.isArray(response.data) ? response.data : [];
+  }
+
+  private normalizeCookieHeader(cookie: string): string {
+    return String(cookie || '')
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\s*;\s*/g, '; ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
   }
 
   private async fetchMercadoLibreApiMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
