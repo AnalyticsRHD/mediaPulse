@@ -872,6 +872,7 @@ export class ExternalApisService {
         ? configuredAdvertisers
         : await this.fetchMercadoLibreAdvertisers(accessToken);
       const productAdsFailures: string[] = [];
+      const displayFailures: string[] = [];
 
       for (const advertiser of advertisers) {
         if (includeProductAds) {
@@ -941,6 +942,7 @@ export class ExternalApisService {
             }
           } catch (error) {
             const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : error instanceof Error ? error.message : String(error);
+            displayFailures.push(`${advertiser.id}: ${detail}`);
             this.logger.warn(`Mercado Libre DSP ${scope} sync skipped for advertiser ${advertiser.id}: ${detail}`);
           }
         }
@@ -948,6 +950,9 @@ export class ExternalApisService {
 
       if (includeProductAds && productAdsFailures.length > 0) {
         throw new BadGatewayException(`Mercado Libre PADS ${scope} sync incomplete (${productAdsFailures.join('; ')})`);
+      }
+      if (includeDisplay && displayFailures.length > 0) {
+        throw new BadGatewayException(`Mercado Libre DSP ${scope} sync incomplete (${displayFailures.join('; ')})`);
       }
 
       const out: DailyMetrics[] = [];

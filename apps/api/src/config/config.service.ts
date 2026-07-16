@@ -216,7 +216,11 @@ export class ConfigService {
   }
 
   get mercadoLibreWebCsrfToken(): string {
-    return this.cleanPlaceholder(process.env.MERCADO_LIBRE_WEB_CSRF_TOKEN || '');
+    return this.cleanPlaceholder(
+      process.env.MERCADO_LIBRE_WEB_CSRF_TOKEN
+      || process.env.MERCADO_LIBRE_WEB_CSRF_TTOKEN
+      || ''
+    );
   }
 
   get mercadoLibreSourceSpreadsheetId(): string {
