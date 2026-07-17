@@ -696,7 +696,7 @@ export class ExternalApisService {
       return await this.fetchMercadoLibreApiMetrics(scope, date);
     } catch (error) {
       this.logger.warn(`Mercado Libre API ${scope} sync returned no metrics: ${error instanceof Error ? error.message : String(error)}`);
-      return [];
+      throw error;
     }
   }
 
@@ -847,6 +847,30 @@ export class ExternalApisService {
       .trim();
   }
 
+  private async fetchMercadoLibreProductAdsSpend(
+    advertiserId: string,
+    scope: SupermetricsScope,
+    date: string,
+    cookie: string,
+    csrfToken: string
+  ): Promise<number> {
+    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const rows = await this.fetchMercadoLibreWebProductMetrics(
+      advertiserId,
+      'PADS',
+      startDate,
+      date,
+      cookie,
+      csrfToken
+    );
+    const investment = rows.find((row) => String(row.name || '').toLowerCase() === 'investment');
+    if (!investment) {
+      throw new BadGatewayException(`PADS investment metric missing for advertiser ${advertiserId}`);
+    }
+
+    return this.numberValue(investment.value);
+  }
+
   private async fetchMercadoLibreApiMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
     const configuredAdvertisers = this.parseMercadoLibreAdvertisers(this.configService.mercadoLibreAdvertiserIds);
     const accessToken = await this.getMercadoLibreAccessToken();
@@ -883,20 +907,13 @@ export class ExternalApisService {
               throw new ServiceUnavailableException('Mercado Libre web cookie/csrf token not configured for PADS metrics');
             }
 
-            const productMetrics = await this.fetchMercadoLibreWebProductMetrics(
+            const spend = await this.fetchMercadoLibreProductAdsSpend(
               advertiser.id,
-              'PADS',
-              startDate,
-              endDate,
+              scope,
+              date,
               cookie,
               csrfToken
             );
-            const investment = productMetrics.find((row) => String(row.name || '').toLowerCase() === 'investment');
-            if (!investment) {
-              throw new BadGatewayException(`PADS investment metric missing for advertiser ${advertiser.id}`);
-            }
-
-            const spend = this.numberValue(investment?.value);
             this.logger.log(`Mercado Libre PADS ${scope} advertiser ${advertiser.id} returned spend ${this.round2(spend)}`);
 
             if (spend > 0) {

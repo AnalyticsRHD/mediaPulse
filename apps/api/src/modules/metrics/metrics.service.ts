@@ -227,30 +227,33 @@ export class MetricsService implements OnModuleInit {
     const sources = source === 'all' ? this.getAllAdsSources() : [source];
 
     try {
-      const results = await Promise.all(
-        sources.flatMap((currentSource) => [
-          (async () => {
+      const resultsBySource = await Promise.all(
+        sources.map(async (currentSource) => {
+          const sourceResults = [];
+          {
             const backup = this.backupMetricsForSync(currentSource, 'monthly', monthlyDate);
             await this.clearMetricsForSync(currentSource, 'monthly', monthlyDate);
 
             const result = await this.safeSyncAdsSource(currentSource, 'monthly', monthlyDate);
             if ('status' in result && result.status === 'failed') {
-              this.restoreMetricsBackup(backup);
+              await this.restoreMetricsBackup(backup);
             }
-            return result;
-          })(),
-          ...dailyDates.map(async (dailyDate) => {
+            sourceResults.push(result);
+          }
+          for (const dailyDate of dailyDates) {
             const backup = this.backupMetricsForSync(currentSource, 'daily', dailyDate);
             await this.clearMetricsForSync(currentSource, 'daily', dailyDate);
 
             const result = await this.safeSyncAdsSource(currentSource, 'daily', dailyDate);
             if ('status' in result && result.status === 'failed') {
-              this.restoreMetricsBackup(backup);
+              await this.restoreMetricsBackup(backup);
             }
-            return result;
-          })
-        ])
+            sourceResults.push(result);
+          }
+          return sourceResults;
+        })
       );
+      const results = resultsBySource.flat();
       const response = {
         date: targetDate,
         monthlyDate,
@@ -297,7 +300,7 @@ export class MetricsService implements OnModuleInit {
 
           const result = await this.safeSyncAdsSource(currentSource, 'monthly', safeEndDate);
           if ('status' in result && result.status === 'failed') {
-            this.restoreMetricsBackup(backup);
+            await this.restoreMetricsBackup(backup);
           }
           return result;
         }),
@@ -308,7 +311,7 @@ export class MetricsService implements OnModuleInit {
 
             const result = await this.safeSyncAdsSource(currentSource, 'daily', date);
             if ('status' in result && result.status === 'failed') {
-              this.restoreMetricsBackup(backup);
+              await this.restoreMetricsBackup(backup);
             }
             return result;
           })
@@ -482,11 +485,11 @@ export class MetricsService implements OnModuleInit {
     );
   }
 
-  private restoreMetricsBackup(metrics: DailyMetrics[]): void {
+  private async restoreMetricsBackup(metrics: DailyMetrics[]): Promise<void> {
     for (const metric of metrics) {
       if (metric.id) {
         this.metrics.set(metric.id, metric);
-        void this.persistMetric(metric);
+        await this.persistMetric(metric);
       }
     }
   }
