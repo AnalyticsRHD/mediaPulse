@@ -831,6 +831,7 @@ export class ExternalApisService {
           siteId: 'MLA'
         },
         timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000,
+        maxRedirects: 0,
         validateStatus: (status) => (status >= 200 && status < 300) || status === 400 || status === 404
       }
     );
@@ -851,24 +852,96 @@ export class ExternalApisService {
     advertiserId: string,
     scope: SupermetricsScope,
     date: string,
-    cookie: string,
-    csrfToken: string
+    accessToken: string
   ): Promise<number> {
     const startDate = scope === 'monthly' ? this.monthStart(date) : date;
-    const rows = await this.fetchMercadoLibreWebProductMetrics(
+    const officialSpend = await this.fetchMercadoLibreProductAdsOfficialSpend(
+      accessToken,
       advertiserId,
-      'PADS',
       startDate,
-      date,
-      cookie,
-      csrfToken
+      date
     );
-    const investment = rows.find((row) => String(row.name || '').toLowerCase() === 'investment');
-    if (!investment) {
-      throw new BadGatewayException(`PADS investment metric missing for advertiser ${advertiserId}`);
+
+    const cookie = this.configService.mercadoLibreWebCookie;
+    const csrfToken = this.configService.mercadoLibreWebCsrfToken;
+    if (!cookie || !csrfToken) {
+      return officialSpend;
     }
 
-    return this.numberValue(investment.value);
+    try {
+      const rows = await this.fetchMercadoLibreWebProductMetrics(
+        advertiserId,
+        'PADS',
+        startDate,
+        date,
+        cookie,
+        csrfToken
+      );
+      const investment = rows.find((row) => String(row.name || '').toLowerCase() === 'investment');
+      const webSpend = this.numberValue(investment?.value);
+      const selectedSpend = Math.max(officialSpend, webSpend);
+
+      if (this.round2(officialSpend) !== this.round2(webSpend)) {
+        this.logger.warn(
+          `Mercado Libre PADS coverage advertiser ${advertiserId}: official=${this.round2(officialSpend)}, web=${this.round2(webSpend)}, selected=${this.round2(selectedSpend)}`
+        );
+      }
+
+      return selectedSpend;
+    } catch (error) {
+      const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Mercado Libre PADS web comparison unavailable for advertiser ${advertiserId}; using official API total ${this.round2(officialSpend)}: ${detail}`
+      );
+      return officialSpend;
+    }
+  }
+
+  private async fetchMercadoLibreProductAdsOfficialSpend(
+    accessToken: string,
+    advertiserId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<number> {
+    let offset = 0;
+    const limit = 50;
+    let totalSpend = 0;
+
+    do {
+      const response = await this.mercadoLibreApiGet(
+        `${this.configService.mercadoLibreApiBaseUrl}/advertising/MLA/advertisers/${encodeURIComponent(advertiserId)}/product_ads/campaigns/search`,
+        {
+          accessToken,
+          headers: {
+            'api-version': '2'
+          },
+          params: {
+            offset,
+            limit,
+            date_from: startDate,
+            date_to: endDate,
+            metrics: 'cost',
+            metrics_summary: true
+          },
+          timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
+        }
+      );
+      const rows = this.extractMercadoLibreList(response.data);
+
+      for (const row of rows) {
+        totalSpend += this.numberValue(
+          row?.metrics_summary?.cost
+          ?? row?.metrics?.cost
+          ?? row?.cost
+        );
+      }
+
+      const total = Number(response.data?.paging?.total || 0);
+      offset += limit;
+      if (rows.length < limit || (total > 0 && offset >= total)) break;
+    } while (offset < 10000);
+
+    return totalSpend;
   }
 
   private async fetchMercadoLibreApiMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
@@ -901,18 +974,11 @@ export class ExternalApisService {
       for (const advertiser of advertisers) {
         if (includeProductAds) {
           try {
-            const cookie = this.configService.mercadoLibreWebCookie;
-            const csrfToken = this.configService.mercadoLibreWebCsrfToken;
-            if (!cookie || !csrfToken) {
-              throw new ServiceUnavailableException('Mercado Libre web cookie/csrf token not configured for PADS metrics');
-            }
-
             const spend = await this.fetchMercadoLibreProductAdsSpend(
               advertiser.id,
               scope,
               date,
-              cookie,
-              csrfToken
+              accessToken
             );
             this.logger.log(`Mercado Libre PADS ${scope} advertiser ${advertiser.id} returned spend ${this.round2(spend)}`);
 
