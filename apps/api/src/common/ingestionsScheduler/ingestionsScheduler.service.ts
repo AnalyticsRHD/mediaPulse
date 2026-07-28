@@ -12,7 +12,9 @@ export class IngestionsSchedulerService {
     private externalApisService: ExternalApisService
   ) {}
 
-  @Cron('0 6 * * *')
+  @Cron('15 10 * * *', {
+    timeZone: 'America/Argentina/Buenos_Aires'
+  })
   async ingestDailyMetrics() {
     this.logger.log('Starting daily metrics ingestion...');
 
@@ -51,7 +53,7 @@ export class IngestionsSchedulerService {
 
   getScheduleStatus() {
     return {
-      nextRun: 'Daily at 6:00 AM (ARG timezone)',
+      nextRun: 'Daily at 10:15 AM (America/Argentina/Buenos_Aires)',
       lastRun: new Date().toISOString(),
       status: 'active'
     };
