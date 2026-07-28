@@ -63,7 +63,8 @@ export class ExternalApisService {
   async fetchSupermetricsMetrics(
     source: SupermetricsSource,
     scope: SupermetricsScope,
-    date = this.today()
+    date = this.today(),
+    rangeStartDate?: string
   ): Promise<DailyMetrics[]> {
     if (this.shouldPreferAdsSheets(source)) {
       return this.fetchAdsSheetsMetrics(source, scope, date);
@@ -86,11 +87,9 @@ export class ExternalApisService {
       throw new ServiceUnavailableException(`Supermetrics ${source} query is not configured correctly`);
     }
 
-    const datedQuery = this.withDateRange(
-      query,
-      scope,
-      date
-    );
+    const datedQuery = rangeStartDate
+      ? { ...query, date_range_type: 'custom', start_date: rangeStartDate, end_date: date }
+      : this.withDateRange(query, scope, date);
 
     try {
       const response = await this.requestSupermetricsData(datedQuery, apiKey);
@@ -149,7 +148,16 @@ export class ExternalApisService {
     return this.fetchMercadoLibreMetrics(scope, date);
   }
 
-  async fetchMetaAdsMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+  async fetchAdsMetricsRange(source: AdsMetricsSource, startDate: string, endDate: string): Promise<DailyMetrics[]> {
+    if (source === 'linkedin') return this.fetchSupermetricsMetrics('linkedin', 'daily', endDate, startDate);
+    if (source === 'google') return this.fetchGoogleAdsMetrics('daily', endDate, startDate);
+    if (source === 'meta') return this.fetchMetaAdsMetrics('daily', endDate, startDate);
+    if (source === 'tiktok') return this.fetchTikTokMetrics('daily', endDate, startDate);
+    if (!this.configService.mercadoLibreSyncEnabled) return [];
+    return this.fetchMercadoLibreMetrics('daily', endDate, startDate);
+  }
+
+  async fetchMetaAdsMetrics(scope: SupermetricsScope, date = this.today(), rangeStartDate?: string): Promise<DailyMetrics[]> {
     const accessToken = this.configService.metaAccessToken;
     const accountIds = this.configService.metaAccountIds;
 
@@ -166,7 +174,7 @@ export class ExternalApisService {
       return [];
     }
 
-    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const startDate = rangeStartDate || (scope === 'monthly' ? this.monthStart(date) : date);
     const endDate = date;
     const aggregated = new Map<string, {
       date: string;
@@ -308,6 +316,7 @@ export class ExternalApisService {
         'date_stop'
       ].join(','),
       time_range: JSON.stringify({ since: startDate, until: endDate }),
+      time_increment: 1,
       limit: 500
     };
 
@@ -357,7 +366,7 @@ export class ExternalApisService {
     return chunks;
   }
 
-  async fetchGoogleAdsMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+  async fetchGoogleAdsMetrics(scope: SupermetricsScope, date = this.today(), rangeStartDate?: string): Promise<DailyMetrics[]> {
     const customerIds = this.configService.googleAdsCustomerIds;
 
     if (
@@ -372,7 +381,7 @@ export class ExternalApisService {
     }
 
     const accessToken = await this.fetchGoogleAdsAccessToken();
-    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const startDate = rangeStartDate || (scope === 'monthly' ? this.monthStart(date) : date);
     const endDate = date;
     const rows: any[] = [];
 
@@ -543,7 +552,7 @@ export class ExternalApisService {
     `.replace(/\s+/g, ' ').trim();
   }
 
-  async fetchTikTokMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+  async fetchTikTokMetrics(scope: SupermetricsScope, date = this.today(), rangeStartDate?: string): Promise<DailyMetrics[]> {
     const accessToken = this.configService.tiktokAccessToken;
     const advertiserIds = this.configService.tiktokAdvertiserIds;
 
@@ -552,7 +561,7 @@ export class ExternalApisService {
       return [];
     }
 
-    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const startDate = rangeStartDate || (scope === 'monthly' ? this.monthStart(date) : date);
     const endDate = date;
     const aggregated = new Map<string, {
       advertiserId: string;
@@ -691,9 +700,9 @@ export class ExternalApisService {
     }
   }
 
-  async fetchMercadoLibreMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+  async fetchMercadoLibreMetrics(scope: SupermetricsScope, date = this.today(), rangeStartDate?: string): Promise<DailyMetrics[]> {
     try {
-      return await this.fetchMercadoLibreApiMetrics(scope, date);
+      return await this.fetchMercadoLibreApiMetrics(scope, date, rangeStartDate);
     } catch (error) {
       this.logger.warn(`Mercado Libre API ${scope} sync returned no metrics: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
@@ -852,9 +861,10 @@ export class ExternalApisService {
     advertiserId: string,
     scope: SupermetricsScope,
     date: string,
-    accessToken: string
+    accessToken: string,
+    rangeStartDate?: string
   ): Promise<number> {
-    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const startDate = rangeStartDate || (scope === 'monthly' ? this.monthStart(date) : date);
     const officialSpend = await this.fetchMercadoLibreProductAdsOfficialSpend(
       accessToken,
       advertiserId,
@@ -944,7 +954,7 @@ export class ExternalApisService {
     return totalSpend;
   }
 
-  private async fetchMercadoLibreApiMetrics(scope: SupermetricsScope, date = this.today()): Promise<DailyMetrics[]> {
+  private async fetchMercadoLibreApiMetrics(scope: SupermetricsScope, date = this.today(), rangeStartDate?: string): Promise<DailyMetrics[]> {
     const configuredAdvertisers = this.parseMercadoLibreAdvertisers(this.configService.mercadoLibreAdvertiserIds);
     const accessToken = await this.getMercadoLibreAccessToken();
 
@@ -952,7 +962,7 @@ export class ExternalApisService {
       throw new ServiceUnavailableException('Mercado Libre access token/refresh token not configured');
     }
 
-    const startDate = scope === 'monthly' ? this.monthStart(date) : date;
+    const startDate = rangeStartDate || (scope === 'monthly' ? this.monthStart(date) : date);
     const endDate = date;
     const aggregated = new Map<string, {
       advertiserId: string;
@@ -978,7 +988,8 @@ export class ExternalApisService {
               advertiser.id,
               scope,
               date,
-              accessToken
+              accessToken,
+              rangeStartDate
             );
             this.logger.log(`Mercado Libre PADS ${scope} advertiser ${advertiser.id} returned spend ${this.round2(spend)}`);
 

@@ -452,6 +452,20 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
     );
   }
 
+  async deleteDailyMetricsForSyncRange(platform: string, startDate: string, endDate: string): Promise<void> {
+    if (!(await this.init()) || !this.pool) return;
+
+    await this.pool.query(
+      `
+        DELETE FROM daily_metrics
+        WHERE plataforma = $1
+          AND granularity = 'daily'
+          AND date BETWEEN $2 AND $3;
+      `,
+      [platform, startDate, endDate]
+    );
+  }
+
   async deleteMany(ids: string[]): Promise<{ deletedCount: number; deletedIds: string[] } | null> {
     if (!(await this.init()) || !this.pool) return null;
 

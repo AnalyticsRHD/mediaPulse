@@ -230,11 +230,11 @@ export class InvestmentsService {
     hasDailyMetrics: boolean;
   } {
     const { consumo, consumoDia, hasMonthlyMetrics, hasDailyMetrics } = this.getConsumptionSnapshot(line, startDate, endDate, mode);
-    const consumoAyer = this.getDailyConsumptionSnapshot(
-      line,
-      this.addDays(this.getConsumoDiaDate(mode, endDate), -1),
-      false
-    ).consumo;
+    const consumoAyerDate = this.addDays(this.getConsumoDiaDate(mode, endDate), -1);
+    const consumoAyerSnapshot = this.getDailyConsumptionSnapshot(line, consumoAyerDate, false);
+    const consumoAyer = consumoAyerSnapshot.hasMetrics
+      ? consumoAyerSnapshot.consumo
+      : this.getStoredYesterdayConsumption(line, consumoAyerDate);
     const share = totalBudget > 0 ? line.presupuesto / totalBudget : 0;
     const porcentajeConsumo = line.presupuesto > 0 ? consumo / line.presupuesto : 0;
     const resultadosProyectados = this.getProjectedResults(line);
@@ -369,6 +369,15 @@ export class InvestmentsService {
 
   private getConsumoDiaDate(mode: InvestmentRangeMode, endDate: string): string {
     return endDate;
+  }
+
+  private getStoredYesterdayConsumption(line: ManualInvestmentLine, requestedDate: string): number {
+    if (!line.lastConsumoUpdatedAt) return 0;
+
+    const snapshotDate = this.formatOperationalDate(new Date(line.lastConsumoUpdatedAt));
+    if (this.previousDate(snapshotDate) !== requestedDate) return 0;
+
+    return line.lastConsumoDia || 0;
   }
 
   private getDailyConsumptionSnapshot(line: ManualInvestmentLine, date: string, useFallback: boolean): {

@@ -1139,16 +1139,18 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       setErrorMessage('');
       const syncDate = getConsumptionSyncDate(datePreset, selectedRange);
       const syncUrl = datePreset === 'custom' || datePreset === 'previousMonth'
-        ? `${API_BASE}/metrics/sync/date-range?source=all&startDate=${selectedRange.startDate}&endDate=${selectedRange.endDate}`
+        ? `${API_BASE}/metrics/sync/date-range/start?source=all&startDate=${selectedRange.startDate}&endDate=${selectedRange.endDate}`
         : `${API_BASE}/metrics/sync/monthly-and-daily?source=all&date=${syncDate}`;
       const response = await requestJson<MetricsSyncResponse>(syncUrl, {
         method: 'POST',
-        timeoutMs: 180000
+        timeoutMs: datePreset === 'custom' || datePreset === 'previousMonth' ? 15000 : 240000
       });
       if (response.syncStatus) setConsumptionSyncStatus(response.syncStatus);
       const syncedAt = response.syncStatus?.finishedAt || response.syncStatus?.startedAt || '';
       if (syncedAt) setLastConsumptionSyncAt(syncedAt);
-      await loadInvestments(getDateRange(datePreset, customRange), datePreset);
+      if (response.syncStatus?.status !== 'running') {
+        await loadInvestments(getDateRange(datePreset, customRange), datePreset);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo actualizar consumo');
     } finally {

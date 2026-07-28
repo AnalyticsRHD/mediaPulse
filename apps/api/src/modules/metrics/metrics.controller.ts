@@ -153,6 +153,27 @@ export class MetricsController {
     return this.metricsService.syncDateRange(source, startDate, endDate);
   }
 
+  @Post('sync/date-range/start')
+  async startDateRangeSync(
+    @Query('source') source: AdsMetricsSource | 'all' = 'all',
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string
+  ) {
+    const current = await this.metricsService.getSyncStatus('consumption');
+    if (current.status === 'running') {
+      return { accepted: false, syncStatus: current };
+    }
+
+    void this.metricsService.syncDateRange(source, startDate, endDate).catch((error) => {
+      this.logger.error(`Background range sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+
+    return {
+      accepted: true,
+      syncStatus: await this.metricsService.getSyncStatus('consumption')
+    };
+  }
+
   private async syncSupermetricsSource(source: SupermetricsSource, scope: SupermetricsScope, date?: string) {
     const metrics = await this.externalApisService.fetchSupermetricsMetrics(source, scope, date);
 

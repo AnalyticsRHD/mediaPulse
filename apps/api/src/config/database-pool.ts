@@ -10,9 +10,9 @@ export function getSharedDatabasePool(dbConfig: DbConfig): Pool {
   sharedPool = new Pool({
     connectionString: dbConfig.url,
     ssl: dbConfig.ssl,
-    max: Number(process.env.DB_POOL_MAX || 1),
+    max: Number(process.env.DB_POOL_MAX || 5),
     idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_TIMEOUT_MS || 10000),
-    connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS || 10000),
+    connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS || 30000),
     allowExitOnIdle: true
   });
 

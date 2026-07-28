@@ -167,8 +167,8 @@ export class MetricsService implements OnModuleInit {
       return {
         key,
         startedAt: fallback?.startedAt || persistedFinishedAt,
-        finishedAt: persistedFinishedAt,
-        status: fallback?.status === 'running' ? 'running' : 'success',
+        finishedAt: fallback?.finishedAt || persistedFinishedAt,
+        status: fallback?.status || 'success',
         totalSynced: fallback?.totalSynced ?? null,
         error: fallback?.error ?? null
       };
@@ -293,30 +293,9 @@ export class MetricsService implements OnModuleInit {
     const sources = source === 'all' ? this.getAllAdsSources() : [source];
 
     try {
-      const results = await Promise.all([
-        ...sources.map(async (currentSource) => {
-          const backup = this.backupMetricsForSync(currentSource, 'monthly', safeEndDate);
-          await this.clearMetricsForSync(currentSource, 'monthly', safeEndDate);
-
-          const result = await this.safeSyncAdsSource(currentSource, 'monthly', safeEndDate);
-          if ('status' in result && result.status === 'failed') {
-            await this.restoreMetricsBackup(backup);
-          }
-          return result;
-        }),
-        ...sources.flatMap((currentSource) => (
-          dates.map(async (date) => {
-            const backup = this.backupMetricsForSync(currentSource, 'daily', date);
-            await this.clearMetricsForSync(currentSource, 'daily', date);
-
-            const result = await this.safeSyncAdsSource(currentSource, 'daily', date);
-            if ('status' in result && result.status === 'failed') {
-              await this.restoreMetricsBackup(backup);
-            }
-            return result;
-          })
-        ))
-      ]);
+      const results = await Promise.all(sources.map(async (currentSource) => {
+        return this.safeSyncAdsSourceRange(currentSource, safeStartDate, safeEndDate);
+      }));
       const response = {
         startDate: safeStartDate,
         endDate: safeEndDate,
@@ -413,7 +392,52 @@ export class MetricsService implements OnModuleInit {
     }
   }
 
-  private async withTimeout<T extends { source: string; scope: SupermetricsScope; date: string; synced: number }>(
+  private async safeSyncAdsSourceRange(source: AdsMetricsSource, startDate: string, endDate: string) {
+    try {
+      this.logger.log(`Starting ${source} range sync for ${startDate}..${endDate}`);
+      const metrics = await this.withTimeout(
+        this.externalApisService.fetchAdsMetricsRange(source, startDate, endDate),
+        120000
+      );
+
+      await this.clearMetricsForSyncRange(source, startDate, endDate);
+      for (let index = 0; index < metrics.length; index += 5) {
+        await Promise.all(metrics.slice(index, index + 5).map((metric) =>
+          this.upsertByDateAndCampaignAsync(
+            metric.date,
+            metric.campaignId,
+            metric.plataforma,
+            metric
+          )
+        ));
+      }
+
+      this.logger.log(`Finished ${source} range sync: ${metrics.length} rows`);
+      return {
+        source,
+        scope: 'daily' as const,
+        date: endDate,
+        startDate,
+        endDate,
+        synced: metrics.length
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`${source} range sync skipped: ${message}`);
+      return {
+        source,
+        scope: 'daily' as const,
+        date: endDate,
+        startDate,
+        endDate,
+        synced: 0,
+        status: 'failed' as const,
+        error: message
+      };
+    }
+  }
+
+  private async withTimeout<T>(
     promise: Promise<T>,
     timeoutMs: number
   ): Promise<T> {
@@ -513,6 +537,17 @@ export class MetricsService implements OnModuleInit {
       && metric.date === monthDate
     );
     await this.manualInvestmentsRepository.deleteDailyMetricsForSync(platform, 'monthly', monthDate);
+  }
+
+  private async clearMetricsForSyncRange(source: AdsMetricsSource, startDate: string, endDate: string): Promise<void> {
+    const platform = this.getPlatformForAdsSource(source);
+    this.removeMetrics((metric) =>
+      this.normalizePlatform(metric.plataforma) === platform
+      && (metric.granularity || 'daily') === 'daily'
+      && metric.date >= startDate
+      && metric.date <= endDate
+    );
+    await this.manualInvestmentsRepository.deleteDailyMetricsForSyncRange(platform, startDate, endDate);
   }
 
   private isSupermetricsSource(source: AdsMetricsSource): source is SupermetricsSource {
