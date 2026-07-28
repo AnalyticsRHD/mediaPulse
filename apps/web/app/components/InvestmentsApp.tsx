@@ -70,6 +70,7 @@ type SortKey =
   | 'desvio'
   | 'consumoAyer'
   | 'consumoDia'
+  | 'costoPorResultado'
   | 'resultadosProyectados'
   | 'fcProyectada';
 
@@ -283,6 +284,7 @@ const sortLabels: Record<SortKey, string> = {
   desvio: 'Desvio',
   consumoAyer: 'Consumo de ayer',
   consumoDia: 'Consumo diario actual',
+  costoPorResultado: 'Costo por resultado',
   resultadosProyectados: 'Resultados proyectados',
   fcProyectada: 'FC proyectada'
 };
@@ -1531,7 +1533,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     onToggle={setOpenControlFilter}
                     onChange={(value) => setControlFilters((current) => ({ ...current, objetivo: value }))}
                   />
-                  <th>Campaña</th>
+                  <th className="campaign-column">Campaña</th>
                   {controlSortEntries.map(([key, label]) => (
                     <SortHeader
                       key={key}
@@ -1551,7 +1553,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                     <td>{line.marca ?? '-'}</td>
                     <td><span className={`platform ${platformClassName(line.plataforma)}`}>{formatPlatformLabel(line.plataforma)}</span></td>
                     <td>{line.objetivo}</td>
-                    <td>{line.campana || '-'}</td>
+                    <td className="campaign-column" title={line.campana || undefined}>{line.campana || '-'}</td>
                     <td>{formatMoney(line.presupuesto, line.moneda)}</td>
                     <td>{formatMoney(line.consumo, line.moneda)}</td>
                     <td>{Math.round(line.porcentajeConsumo * 100)}%</td>
@@ -1575,6 +1577,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                       <td>{formatMoney(line.consumoAyer, line.moneda)}</td>
                     ) : null}
                     <td>{formatMoney(line.consumoDia, line.moneda)}</td>
+                    <td>{formatMoney(line.costoPorResultado, line.moneda)}</td>
                     <td>{integer.format(line.resultadosProyectados)}</td>
                     <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
                     <td className="actions-cell">
@@ -1586,7 +1589,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                 ))}
                 {!loading && filteredControlLines.length === 0 ? (
                   <tr>
-                    <td colSpan={showYesterdayConsumption ? 16 : 15} className="empty">No hay inversiones cargadas para este mes.</td>
+                    <td colSpan={showYesterdayConsumption ? 17 : 16} className="empty">No hay inversiones cargadas para este mes.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -1605,6 +1608,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
                         <td>{formatMoney(total.consumoAyer, total.moneda)}</td>
                       ) : null}
                       <td>{formatMoney(total.consumoDia, total.moneda)}</td>
+                      <td></td>
                       <td colSpan={3}></td>
                     </tr>
                   ))}

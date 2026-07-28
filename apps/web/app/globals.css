@@ -588,6 +588,17 @@ table {
   text-align: left;
 }
 
+.control-table .campaign-column {
+  box-sizing: border-box;
+  max-width: 170px;
+  width: 170px;
+}
+
+.control-table td.campaign-column {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .control-table .control-totals td {
   background: #0f4f4f;
   color: #fff;
