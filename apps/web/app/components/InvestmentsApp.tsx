@@ -2484,13 +2484,15 @@ function DateRangePicker({
               if (!day) return <span key={`empty-${index}`} className="range-day empty" />;
               const inRange = draftStart && draftEnd && day.date >= draftStart && day.date <= draftEnd;
               const selected = day.date === draftStart || day.date === draftEnd;
+              const isToday = day.date === todayDate();
 
               return (
                 <button
                   key={day.date}
-                  className={`range-day ${inRange ? 'in-range' : ''} ${selected ? 'selected' : ''}`}
+                  className={`range-day ${inRange ? 'in-range' : ''} ${selected ? 'selected' : ''} ${isToday ? 'today' : ''}`}
                   type="button"
                   onClick={() => selectDate(day.date)}
+                  aria-current={isToday ? 'date' : undefined}
                 >
                   {day.day}
                 </button>

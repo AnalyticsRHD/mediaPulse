@@ -299,7 +299,8 @@ export class InvestmentsService {
       const monthlyFallback = this.getMonthlyRangeFallback(line, startDate, endDate, monthlyBaseMetrics);
       const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
       const isExactMonthToDate = this.isMonthToDateRange(line, startDate, endDate)
-        && this.metricsCoverDate(monthlyMetrics, endDate);
+        && monthlyMetrics.length > 0
+        && monthlyMetrics.every((metric) => metric.coverageEndDate === endDate);
 
       if (isExactMonthToDate) {
         const monthlyConsumo = this.normalizePlatform(line.plataforma) === 'MELI'

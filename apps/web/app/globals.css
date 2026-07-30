@@ -1845,6 +1845,36 @@ tbody tr:nth-child(even) {
   color: #fff;
 }
 
+.range-day.today {
+  position: relative;
+  color: #5b21b6;
+}
+
+.range-day.today:not(.selected),
+.range-day.today:not(.selected):hover {
+  border-color: transparent;
+}
+
+.range-day.today::after {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #5b21b6;
+  content: '';
+  transform: translateX(-50%);
+}
+
+.range-day.today.selected {
+  color: #fff;
+}
+
+.range-day.today.selected::after {
+  background: #fff;
+}
+
 .range-day:not(.empty):hover {
   border-color: #5b21b6;
 }
