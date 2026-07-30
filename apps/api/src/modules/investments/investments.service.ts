@@ -297,6 +297,22 @@ export class InvestmentsService {
     if (mode === 'custom') {
       const rangeSnapshot = this.getDateRangeConsumptionSnapshot(line, startDate, endDate);
       const monthlyFallback = this.getMonthlyRangeFallback(line, startDate, endDate, monthlyBaseMetrics);
+      const monthlyMetrics = this.getMatchedMetricsWithFallback(line, monthlyBaseMetrics);
+      const isExactMonthToDate = this.isMonthToDateRange(line, startDate, endDate)
+        && this.metricsCoverDate(monthlyMetrics, endDate);
+
+      if (isExactMonthToDate) {
+        const monthlyConsumo = this.normalizePlatform(line.plataforma) === 'MELI'
+          ? monthlyBaseMetrics.reduce((sum, metric) => sum + Number(metric.spend || 0), 0)
+          : this.getWeightedMetricSpend(monthlyMetrics, line, monthlyBaseMetrics.length === 1);
+
+        return {
+          consumo: monthlyConsumo,
+          consumoDia,
+          hasMonthlyMetrics: true,
+          hasDailyMetrics: rangeSnapshot.hasMetrics || consumoDiaSnapshot.hasMetrics
+        };
+      }
 
       return {
         consumo: rangeSnapshot.hasMetrics ? rangeSnapshot.consumo : monthlyFallback,

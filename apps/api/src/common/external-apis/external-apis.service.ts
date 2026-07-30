@@ -5,6 +5,7 @@ import path from 'path';
 import { ConfigService } from '../../config/config.service';
 import { DailyMetrics } from '@mediapulse/shared';
 import { BrandMappingService } from '../brand-mapping/brand-mapping.service';
+import { MercadoLibreOAuthRepository } from './mercado-libre-oauth.repository';
 
 const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
 
@@ -57,7 +58,8 @@ export class ExternalApisService {
 
   constructor(
     private configService: ConfigService,
-    private brandMappingService: BrandMappingService
+    private brandMappingService: BrandMappingService,
+    private mercadoLibreOAuthRepository: MercadoLibreOAuthRepository
   ) {}
 
   async fetchSupermetricsMetrics(
@@ -900,10 +902,12 @@ export class ExternalApisService {
       return selectedSpend;
     } catch (error) {
       const detail = axios.isAxiosError(error) ? this.axiosDetail(error) : error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        `Mercado Libre PADS web comparison unavailable for advertiser ${advertiserId}; using official API total ${this.round2(officialSpend)}: ${detail}`
+      this.logger.error(
+        `Mercado Libre PADS web comparison failed for advertiser ${advertiserId}; refusing partial official total ${this.round2(officialSpend)}: ${detail}`
       );
-      return officialSpend;
+      throw new BadGatewayException(
+        `Mercado Libre PADS coverage validation failed for advertiser ${advertiserId} (${detail})`
+      );
     }
   }
 
@@ -984,23 +988,25 @@ export class ExternalApisService {
       for (const advertiser of advertisers) {
         if (includeProductAds) {
           try {
-            const spend = await this.fetchMercadoLibreProductAdsSpend(
-              advertiser.id,
-              scope,
-              date,
+            const metricRows = await this.fetchMercadoLibreProductAdsDailyMetrics(
               accessToken,
-              rangeStartDate
+              advertiser.id,
+              startDate,
+              endDate
             );
-            this.logger.log(`Mercado Libre PADS ${scope} advertiser ${advertiser.id} returned spend ${this.round2(spend)}`);
+            const spend = metricRows.reduce((sum, row) => sum + this.numberValue(row.cost), 0);
+            this.logger.log(
+              `Mercado Libre PADS ${scope} advertiser ${advertiser.id} returned ${metricRows.length} daily rows and spend ${this.round2(spend)}`
+            );
 
-            if (spend > 0) {
+            for (const metricRow of metricRows) {
               this.addMercadoLibreSpend(
                 aggregated,
                 advertiser,
                 scope,
                 endDate,
-                { date: endDate },
-                spend
+                metricRow,
+                this.numberValue(metricRow.cost)
               );
             }
           } catch (error) {
@@ -1217,9 +1223,12 @@ export class ExternalApisService {
 
     do {
       const response = await this.mercadoLibreApiGet(
-        `${this.configService.mercadoLibreApiBaseUrl}/advertising/advertisers/${encodeURIComponent(advertiserId)}/product_ads/campaigns`,
+        `${this.configService.mercadoLibreApiBaseUrl}/advertising/MLA/advertisers/${encodeURIComponent(advertiserId)}/product_ads/campaigns/search`,
         {
           accessToken,
+          headers: {
+            'api-version': '2'
+          },
           params: {
             offset,
             limit,
@@ -1353,13 +1362,17 @@ export class ExternalApisService {
     endDate: string
   ): Promise<any[]> {
     const response = await this.mercadoLibreApiGet(
-      `${this.configService.mercadoLibreApiBaseUrl}/advertising/product_ads/campaigns/${encodeURIComponent(campaignId)}/metrics`,
+      `${this.configService.mercadoLibreApiBaseUrl}/advertising/MLA/product_ads/campaigns/${encodeURIComponent(campaignId)}`,
       {
         accessToken,
+        headers: {
+          'api-version': '2'
+        },
         params: {
           date_from: startDate,
           date_to: endDate,
-          metrics: 'cost,spend,investment'
+          metrics: 'cost',
+          aggregation_type: 'DAILY'
         },
         timeout: this.configService.mercadoLibreSyncTimeoutSeconds * 1000
       }
@@ -1368,6 +1381,36 @@ export class ExternalApisService {
 
     if (rows.length > 0) return rows;
     return [response.data];
+  }
+
+  private async fetchMercadoLibreProductAdsDailyMetrics(
+    accessToken: string,
+    advertiserId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<Array<{ date: string; cost: number }>> {
+    const campaigns = await this.fetchMercadoLibreCampaigns(accessToken, advertiserId);
+    const dailySpend = new Map<string, number>();
+
+    for (let index = 0; index < campaigns.length; index += 5) {
+      const batch = campaigns.slice(index, index + 5);
+      const rowsByCampaign = await Promise.all(batch.map((campaign) =>
+        this.fetchMercadoLibreCampaignMetrics(accessToken, String(campaign.id), startDate, endDate)
+      ));
+
+      for (const rows of rowsByCampaign) {
+        for (const row of rows) {
+          const metricDate = String(row?.date || row?.day || '').slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(metricDate)) continue;
+          const cost = this.numberValue(row?.cost ?? row?.metrics?.cost);
+          dailySpend.set(metricDate, (dailySpend.get(metricDate) || 0) + cost);
+        }
+      }
+    }
+
+    return Array.from(dailySpend.entries())
+      .map(([date, cost]) => ({ date, cost: this.round2(cost) }))
+      .sort((a, b) => a.date.localeCompare(b.date));
   }
 
   private async mercadoLibreApiGet<T = any>(
@@ -1426,7 +1469,9 @@ export class ExternalApisService {
   }
 
   private async doRefreshMercadoLibreAccessToken(force: boolean): Promise<string> {
-    const state = await this.loadMercadoLibreOAuthState();
+    const persistedState = force ? await this.mercadoLibreOAuthRepository.find() : null;
+    const state = persistedState || await this.loadMercadoLibreOAuthState();
+    if (persistedState) this.mercadoLibreOAuthState = persistedState;
     if (!force && state?.accessToken && !this.isMercadoLibreTokenExpiring(state)) {
       return state.accessToken;
     }
@@ -1479,6 +1524,12 @@ export class ExternalApisService {
   private async loadMercadoLibreOAuthState(): Promise<MercadoLibreOAuthState | null> {
     if (this.mercadoLibreOAuthState !== undefined) return this.mercadoLibreOAuthState;
 
+    const persistedState = await this.mercadoLibreOAuthRepository.find();
+    if (persistedState) {
+      this.mercadoLibreOAuthState = persistedState;
+      return persistedState;
+    }
+
     const statePath = this.getMercadoLibreOAuthStatePath();
     try {
       const raw = await fs.readFile(statePath, 'utf8');
@@ -1489,6 +1540,7 @@ export class ExternalApisService {
         expiresAt: String(parsed.expiresAt || ''),
         updatedAt: String(parsed.updatedAt || '')
       };
+      await this.mercadoLibreOAuthRepository.save(this.mercadoLibreOAuthState);
       return this.mercadoLibreOAuthState;
     } catch {
       const accessToken = this.configService.mercadoLibreAccessToken;
@@ -1501,14 +1553,27 @@ export class ExternalApisService {
           updatedAt: ''
         }
         : null;
+      if (this.mercadoLibreOAuthState) {
+        await this.mercadoLibreOAuthRepository.save(this.mercadoLibreOAuthState);
+      }
       return this.mercadoLibreOAuthState;
     }
   }
 
   private async saveMercadoLibreOAuthState(state: MercadoLibreOAuthState): Promise<void> {
+    const persisted = await this.mercadoLibreOAuthRepository.save(state);
+    if (!persisted) {
+      this.logger.warn('Mercado Libre OAuth state could not be persisted in PostgreSQL; using filesystem fallback');
+    }
+
     const statePath = this.getMercadoLibreOAuthStatePath();
-    await fs.mkdir(path.dirname(statePath), { recursive: true });
-    await fs.writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    try {
+      await fs.mkdir(path.dirname(statePath), { recursive: true });
+      await fs.writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    } catch (error) {
+      if (!persisted) throw error;
+      this.logger.warn(`Mercado Libre OAuth filesystem backup unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private getMercadoLibreOAuthStatePath(): string {

@@ -604,13 +604,15 @@ function getControlCurrencyTotals(lines: InvestmentLine[]): ControlCurrencyTotal
 }
 
 function getManualFormSuggestions(lines: ManualHistoryLine[], form: ManualForm): ManualHistoryLine[] {
-  if (!form.anunciante || !form.marca || !form.plataforma) return [];
+  if (!form.anunciante || !form.marca || !form.plataforma || !/^\d{4}-\d{2}$/.test(form.mes)) return [];
 
   const client = normalizeClientName(form.anunciante);
   const brand = normalizeTypeaheadText(form.marca);
   const platform = normalizePlatformName(form.plataforma);
+  const previousMonth = addDays(`${form.mes}-01`, -1).slice(0, 7);
   const matches = lines.filter((line) => (
-    normalizeClientName(line.anunciante) === client
+    line.mes === previousMonth
+    && normalizeClientName(line.anunciante) === client
     && normalizeTypeaheadText(line.marca ?? '') === brand
     && normalizePlatformName(line.plataforma) === platform
   ));

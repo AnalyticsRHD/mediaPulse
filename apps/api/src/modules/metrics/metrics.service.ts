@@ -400,7 +400,12 @@ export class MetricsService implements OnModuleInit {
         120000
       );
 
-      await this.clearMetricsForSyncRange(source, startDate, endDate);
+      if (metrics.some((metric) => (metric.granularity || 'daily') === 'daily')) {
+        await this.clearMetricsForSyncRange(source, startDate, endDate);
+      }
+      if (metrics.some((metric) => metric.granularity === 'monthly')) {
+        await this.clearMetricsForSync(source, 'monthly', endDate);
+      }
       for (let index = 0; index < metrics.length; index += 5) {
         await Promise.all(metrics.slice(index, index + 5).map((metric) =>
           this.upsertByDateAndCampaignAsync(
