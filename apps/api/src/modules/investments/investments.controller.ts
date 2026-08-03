@@ -15,19 +15,33 @@ export class InvestmentsController {
   ) {}
 
   @Get('management/credit-allocations')
-  async getCreditAllocations(@Headers('authorization') authorization?: string) {
+  async getCreditAllocations(
+    @Headers('authorization') authorization?: string,
+    @Query('page') pageValue?: string,
+    @Query('limit') limitValue?: string
+  ) {
     await this.authService.requireAdmin(authorization);
-    const cached = await this.creditAllocationsRepository.findAll();
-    if (cached.length > 0) return cached;
+    const page = Math.max(1, Number(pageValue) || 1);
+    const limit = Math.min(100, Math.max(1, Number(limitValue) || 30));
+    const cachedPage = await this.creditAllocationsRepository.findPage(page, limit);
+    if (cachedPage.total > 0) return cachedPage;
     const fetched = await this.externalApisService.fetchMetaCreditAllocations();
-    return this.creditAllocationsRepository.upsertAll(fetched);
+    await this.creditAllocationsRepository.upsertAll(fetched);
+    return this.creditAllocationsRepository.findPage(page, limit);
   }
 
   @Post('management/credit-allocations/sync')
-  async syncCreditAllocations(@Headers('authorization') authorization?: string) {
+  async syncCreditAllocations(
+    @Headers('authorization') authorization?: string,
+    @Query('page') pageValue?: string,
+    @Query('limit') limitValue?: string
+  ) {
     await this.authService.requireAdmin(authorization);
     const fetched = await this.externalApisService.fetchMetaCreditAllocations();
-    return this.creditAllocationsRepository.upsertAll(fetched);
+    await this.creditAllocationsRepository.upsertAll(fetched);
+    const page = Math.max(1, Number(pageValue) || 1);
+    const limit = Math.min(100, Math.max(1, Number(limitValue) || 30));
+    return this.creditAllocationsRepository.findPage(page, limit);
   }
 
   @Get()

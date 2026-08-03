@@ -2,6 +2,7 @@
 
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
 const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
@@ -73,6 +74,18 @@ type SortKey =
 
 type ControlSort = {
   key: SortKey;
+  direction: SortDirection;
+} | null;
+
+type ManagementSortKey =
+  | 'creditoDisponible'
+  | 'montoCargado'
+  | 'fecha'
+  | 'consumoAyer'
+  | 'consumoMes';
+
+type ManagementSort = {
+  key: ManagementSortKey;
   direction: SortDirection;
 } | null;
 
@@ -166,6 +179,14 @@ type CreditAllocationLine = {
   consumoMes: number;
   consumoPromedio8Dias: number;
   diasCoberturaCredito: number | null;
+};
+
+type CreditAllocationPage = {
+  items: CreditAllocationLine[];
+  total: number;
+  page: number;
+  limit: number;
+  hasMore: boolean;
 };
 
 function getCreditAvailabilityClass(days: number | null | undefined) {
@@ -706,6 +727,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const [manualHistory, setManualHistory] = useState<ManualHistoryLine[]>([]);
   const [creditAllocations, setCreditAllocations] = useState<CreditAllocationLine[]>([]);
   const [creditAllocationsLoading, setCreditAllocationsLoading] = useState(false);
+  const [creditAllocationsPage, setCreditAllocationsPage] = useState(1);
+  const [creditAllocationsHasMore, setCreditAllocationsHasMore] = useState(false);
   const [managementPlatformFilter, setManagementPlatformFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(defaultForm);
@@ -737,6 +760,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const [controlFilters, setControlFilters] = useState<ControlFilters>(emptyControlFilters);
   const [openControlFilter, setOpenControlFilter] = useState<OpenFilterKey | null>(null);
   const [controlSort, setControlSort] = useState<ControlSort>(null);
+  const [managementSort, setManagementSort] = useState<ManagementSort>(null);
+  const [managementAccountSearch, setManagementAccountSearch] = useState('');
   const [openSelectId, setOpenSelectId] = useState<string | null>(null);
   const [previewClientFilter, setPreviewClientFilter] = useState('');
   const [previewBrandFilter, setPreviewBrandFilter] = useState('');
@@ -800,12 +825,29 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
     () => uniqueValues(creditAllocations.map((line) => line.plataforma)).sort(),
     [creditAllocations]
   );
-  const filteredCreditAllocations = useMemo(
-    () => creditAllocations
+  const filteredCreditAllocations = useMemo(() => {
+    const normalizedSearch = managementAccountSearch.trim().toLowerCase();
+    const lines = creditAllocations
       .filter((line) => !managementPlatformFilter || line.plataforma === managementPlatformFilter)
-      .sort((a, b) => b.consumoAyer - a.consumoAyer || a.accountName.localeCompare(b.accountName)),
-    [creditAllocations, managementPlatformFilter]
-  );
+      .filter((line) => !normalizedSearch
+        || line.accountName.toLowerCase().includes(normalizedSearch)
+        || line.accountId.toLowerCase().includes(normalizedSearch)
+        || `act_${line.accountId}`.toLowerCase().includes(normalizedSearch));
+
+    return [...lines].sort((a, b) => {
+      if (!managementSort) {
+        return b.consumoAyer - a.consumoAyer || a.accountName.localeCompare(b.accountName);
+      }
+
+      let result: number;
+      if (managementSort.key === 'fecha') {
+        result = (a.fecha ? Date.parse(a.fecha) : 0) - (b.fecha ? Date.parse(b.fecha) : 0);
+      } else {
+        result = Number(a[managementSort.key] ?? 0) - Number(b[managementSort.key] ?? 0);
+      }
+      return managementSort.direction === 'asc' ? result : -result;
+    });
+  }, [creditAllocations, managementPlatformFilter, managementAccountSearch, managementSort]);
   const controlCurrencyTotals = useMemo(() => getControlCurrencyTotals(filteredControlLines), [filteredControlLines]);
   const previewBrands = useMemo(() => {
     const lines = scopedManualData?.lines ?? [];
@@ -945,22 +987,36 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
     }
   }
 
-  async function loadCreditAllocations(sync = false) {
+  async function loadCreditAllocations(sync = false, page = 1, append = false) {
+    if (creditAllocationsLoading) return;
     setCreditAllocationsLoading(true);
     setErrorMessage('');
     try {
-      const payload = await requestJson<CreditAllocationLine[]>(
-        `${API_BASE}/investments/management/credit-allocations${sync ? '/sync' : ''}`,
+      const payload = await requestJson<CreditAllocationPage>(
+        `${API_BASE}/investments/management/credit-allocations${sync ? '/sync' : ''}?page=${page}&limit=30`,
         { cache: 'no-store', method: sync ? 'POST' : 'GET' }
       );
-      setCreditAllocations(payload);
+      setCreditAllocations((current) => append
+        ? Array.from(new Map([...current, ...payload.items].map((line) => [line.accountId, line])).values())
+        : payload.items);
+      setCreditAllocationsPage(payload.page);
+      setCreditAllocationsHasMore(payload.hasMore);
     } catch (error) {
-      setCreditAllocations([]);
+      if (!append) {
+        setCreditAllocations([]);
+        setCreditAllocationsHasMore(false);
+      }
       setErrorMessage(error instanceof Error ? error.message : 'No se pudieron cargar las lineas de credito');
     } finally {
       setCreditAllocationsLoading(false);
     }
   }
+
+  const creditAllocationsEndRef = useInfiniteScroll({
+    enabled: activeTab === 'management' && creditAllocationsHasMore,
+    loading: creditAllocationsLoading,
+    onLoadMore: () => loadCreditAllocations(false, creditAllocationsPage + 1, true)
+  });
 
   async function openLineHistory(line: InvestmentLine) {
     setHistoryModalLine(line);
@@ -1105,7 +1161,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
 
   useEffect(() => {
     if (!authToken || activeTab !== 'management' || authUser?.role !== 'ADMIN') return;
-    loadCreditAllocations().catch(() => undefined);
+    loadCreditAllocations(false, 1, false).catch(() => undefined);
   }, [authToken, activeTab, authUser?.role]);
 
   useEffect(() => {
@@ -1504,11 +1560,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
           <p className="eyebrow">{isManagementView ? 'MediaPulse CA' : 'MediaPulse RHD'}</p>
           <h1>{isManagementView ? 'Credit Alloc' : 'Inversiones'}</h1>
         </div>
-        {isManagementView ? (
-          <div className="user-pill">
-            <button type="button" onClick={handleLogout}>Salir</button>
-          </div>
-        ) : (
+        {!isManagementView ? (
           <div className="date-actions-stack">
             <div className="date-actions">
             <label className="month-control view-as-control">
@@ -1542,29 +1594,48 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
             </div>
             <p className="last-sync">Ultima actualizacion: {formatLastUpdate(lastConsumptionSyncAt)}</p>
           </div>
-        )}
+        ) : null}
       </header>
 
-      <nav className="tabs" aria-label="Vistas de inversiones">
-        <button className={activeTab === 'control' ? 'active' : ''} onClick={() => router.push('/control')}>
-          Control
-        </button>
-        <button className={activeTab === 'manual' ? 'active' : ''} onClick={() => router.push('/carga-manual')}>
-         Forecast
-        </button>
-        {authUser.role === 'ADMIN' ? (
-          <button className={activeTab === 'management' ? 'active' : ''} onClick={() => router.push('/CreditAlloc')}>
-            CA
+      <div className="navigation-row">
+        <nav className="tabs" aria-label="Vistas de inversiones">
+          <button className={activeTab === 'control' ? 'active' : ''} onClick={() => router.push('/control')}>
+            Control
           </button>
+          <button className={activeTab === 'manual' ? 'active' : ''} onClick={() => router.push('/carga-manual')}>
+           Forecast
+          </button>
+          {authUser.role === 'ADMIN' ? (
+            <button className={activeTab === 'management' ? 'active' : ''} onClick={() => router.push('/CreditAlloc')}>
+              CA
+            </button>
+          ) : null}
+        </nav>
+        {isManagementView ? (
+          <div className="user-pill navigation-logout">
+            <button type="button" onClick={handleLogout}>Salir</button>
+          </div>
         ) : null}
-      </nav>
+      </div>
 
       {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
 
       {activeTab === 'management' ? (
         <section className="management-workspace" aria-label="Gestión de Credit Alloc">
           <div className="management-toolbar">
-            <button className="secondary-button" type="button" onClick={() => loadCreditAllocations(true)} disabled={creditAllocationsLoading}>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setManagementPlatformFilter('');
+                setManagementAccountSearch('');
+                setManagementSort(null);
+                setOpenControlFilter(null);
+              }}
+            >
+              Limpiar filtros
+            </button>
+            <button className="secondary-button" type="button" onClick={() => loadCreditAllocations(true, 1, false)} disabled={creditAllocationsLoading}>
               {creditAllocationsLoading ? 'Actualizando...' : 'Actualizar'}
             </button>
           </div>
@@ -1582,12 +1653,21 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                     onToggle={setOpenControlFilter}
                     onChange={setManagementPlatformFilter}
                   />
-                  <th>Cuenta (Ad Account)</th>
-                  <th>Credito Disponible</th>
-                  <th>Monto Cargado</th>
-                  <th>Fecha</th>
-                  <th>Consumo Diario (consumo ayer)</th>
-                  <th>Consumo (este mes)</th>
+                  <th>
+                    <input
+                      className="management-account-search"
+                      type="search"
+                      value={managementAccountSearch}
+                      onChange={(event) => setManagementAccountSearch(event.target.value)}
+                      placeholder="Buscar cuenta..."
+                      aria-label="Buscar cuenta por nombre o ID"
+                    />
+                  </th>
+                  <ManagementSortHeader label="Credito Disponible" sortKey="creditoDisponible" currentSort={managementSort} onChange={setManagementSort} />
+                  <ManagementSortHeader label="Monto Cargado" sortKey="montoCargado" currentSort={managementSort} onChange={setManagementSort} />
+                  <ManagementSortHeader label="Fecha" sortKey="fecha" currentSort={managementSort} onChange={setManagementSort} />
+                  <ManagementSortHeader label="Consumo Diario (consumo ayer)" sortKey="consumoAyer" currentSort={managementSort} onChange={setManagementSort} />
+                  <ManagementSortHeader label="Consumo (este mes)" sortKey="consumoMes" currentSort={managementSort} onChange={setManagementSort} />
                 </tr>
               </thead>
               <tbody>
@@ -1625,6 +1705,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
               </tbody>
             </table>
           </div>
+          <div ref={creditAllocationsEndRef} className="infinite-scroll-sentinel" aria-hidden="true" />
+          {creditAllocationsLoading && creditAllocations.length > 0 ? (
+            <p className="infinite-scroll-status">Cargando más cuentas...</p>
+          ) : null}
         </section>
       ) : activeTab === 'control' ? (
         <section className="workspace">
@@ -2803,6 +2887,39 @@ function SortHeader({
 }) {
   const isActive = currentSort?.key === sortKey;
   const nextSort: ControlSort = !isActive
+    ? { key: sortKey, direction: 'desc' }
+    : currentSort.direction === 'desc'
+      ? { key: sortKey, direction: 'asc' }
+      : null;
+
+  return (
+    <th>
+      <button
+        className={`sort-header ${isActive ? 'active' : ''}`}
+        type="button"
+        onClick={() => onChange(nextSort)}
+        aria-label={`Ordenar ${label}`}
+      >
+        <span>{label}</span>
+        <span className="sort-icon">{isActive ? (currentSort.direction === 'desc' ? '↓' : '↑') : '↕'}</span>
+      </button>
+    </th>
+  );
+}
+
+function ManagementSortHeader({
+  label,
+  sortKey,
+  currentSort,
+  onChange
+}: {
+  label: string;
+  sortKey: ManagementSortKey;
+  currentSort: ManagementSort;
+  onChange: (sort: ManagementSort) => void;
+}) {
+  const isActive = currentSort?.key === sortKey;
+  const nextSort: ManagementSort = !isActive
     ? { key: sortKey, direction: 'desc' }
     : currentSort.direction === 'desc'
       ? { key: sortKey, direction: 'asc' }

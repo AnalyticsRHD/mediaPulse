@@ -57,7 +57,7 @@ export type MetaCreditAllocation = {
   creditoDisponible: number;
   montoCargado: number;
   fecha: string;
-  fechaSource?: 'META_ACTIVITY' | 'DETECTED' | 'ACCOUNT_CREATED';
+  fechaSource?: 'META_ACTIVITY' | 'DETECTED';
   consumoAyer: number;
   consumoMes: number;
   consumoPromedio8Dias: number;
@@ -331,11 +331,11 @@ export class ExternalApisService {
 
     return Promise.all(matchingAccounts.map(async (account) => {
       const accountId = String(account.id || '').replace(/^act_/i, '');
-      const [consumoAyer, consumoMes, consumosDiariosUltimos8Dias, spendLimitUpdatedAt] = await Promise.all([
+      const [consumoAyer, consumoMes, consumosDiariosUltimos8Dias, latestActivityAt] = await Promise.all([
         this.fetchMetaAccountSpend(accountId, yesterday, yesterday, accessToken),
         this.fetchMetaAccountSpend(accountId, monthStart, monthEnd, accessToken),
         this.fetchMetaAccountDailySpend(accountId, eightDayStart, today, accessToken),
-        this.fetchMetaSpendLimitUpdatedAt(accountId, accessToken)
+        this.fetchMetaLatestActivityAt(accountId, accessToken)
       ]);
       const montoCargado = this.metaMoneyValue(account.spend_cap);
       const amountSpent = this.metaMoneyValue(account.amount_spent);
@@ -354,8 +354,8 @@ export class ExternalApisService {
         currency: String(account.currency || 'USD'),
         creditoDisponible,
         montoCargado: this.round2(montoCargado),
-        fecha: spendLimitUpdatedAt || this.metaDateOnly(account.created_time),
-        fechaSource: spendLimitUpdatedAt ? 'META_ACTIVITY' : 'ACCOUNT_CREATED',
+        fecha: latestActivityAt,
+        fechaSource: latestActivityAt ? 'META_ACTIVITY' : undefined,
         consumoAyer: this.round2(consumoAyer),
         consumoMes: this.round2(consumoMes),
         consumoPromedio8Dias,
@@ -499,7 +499,7 @@ export class ExternalApisService {
     }
   }
 
-  private async fetchMetaSpendLimitUpdatedAt(accountId: string, accessToken: string): Promise<string> {
+  private async fetchMetaLatestActivityAt(accountId: string, accessToken: string): Promise<string> {
     try {
       const activities = await this.fetchMetaPagedData(
         `${this.configService.metaApiBaseUrl}/act_${accountId}/activities`,
@@ -509,6 +509,11 @@ export class ExternalApisService {
           limit: 500
         }
       );
+      const latestActivity = activities
+        .sort((a, b) => this.metaEventTimestamp(b.event_time) - this.metaEventTimestamp(a.event_time))[0];
+      const latestTimestamp = this.metaEventTimestamp(latestActivity?.event_time);
+      if (latestTimestamp > 0) return new Date(latestTimestamp).toISOString().slice(0, 10);
+
       const spendLimitActivity = activities
         .filter((activity) => {
           const eventType = String(activity.event_type || '').toLowerCase();
@@ -531,9 +536,62 @@ export class ExternalApisService {
         .sort((a, b) => this.metaEventTimestamp(b.event_time) - this.metaEventTimestamp(a.event_time))[0];
 
       const timestamp = this.metaEventTimestamp(spendLimitActivity?.event_time);
-      return timestamp > 0 ? new Date(timestamp).toISOString().slice(0, 10) : '';
+      return timestamp > 0
+        ? new Date(timestamp).toISOString().slice(0, 10)
+        : this.fetchMetaLatestSpendDate(accountId, accessToken);
     } catch (error) {
-      this.logger.warn(`Meta account ${accountId} spend limit history failed: ${this.axiosDetail(error)}`);
+      this.logger.warn(`Meta account ${accountId} latest activity failed: ${this.axiosDetail(error)}`);
+      return this.fetchMetaLatestActivityByCategory(accountId, accessToken);
+    }
+  }
+
+  private async fetchMetaLatestActivityByCategory(accountId: string, accessToken: string): Promise<string> {
+    const categories = ['ACCOUNT', 'AD', 'AD_KEYWORDS', 'AD_SET', 'AUDIENCE', 'BID', 'BUDGET', 'CAMPAIGN', 'DATE', 'STATUS'];
+    const responses = await Promise.allSettled(categories.map((category) => (
+      axios.get(`${this.configService.metaApiBaseUrl}/act_${accountId}/activities`, {
+        params: {
+          access_token: accessToken,
+          fields: 'event_time',
+          category,
+          limit: 1
+        },
+        timeout: Math.min(this.configService.metaSyncTimeoutSeconds * 1000, 20000)
+      })
+    )));
+
+    const latestTimestamp = responses.reduce((latest, response) => {
+      if (response.status !== 'fulfilled') return latest;
+      const eventTime = response.value.data?.data?.[0]?.event_time;
+      return Math.max(latest, this.metaEventTimestamp(eventTime));
+    }, 0);
+
+    return latestTimestamp > 0
+      ? new Date(latestTimestamp).toISOString().slice(0, 10)
+      : this.fetchMetaLatestSpendDate(accountId, accessToken);
+  }
+
+  private async fetchMetaLatestSpendDate(accountId: string, accessToken: string): Promise<string> {
+    const today = this.today();
+    const startDate = this.shiftDate(today, -30);
+    try {
+      const rows = await this.fetchMetaPagedData(
+        `${this.configService.metaApiBaseUrl}/act_${accountId}/insights`,
+        {
+          access_token: accessToken,
+          level: 'account',
+          fields: 'spend,date_start',
+          time_range: JSON.stringify({ since: startDate, until: today }),
+          time_increment: 1,
+          limit: 100
+        }
+      );
+
+      const latest = rows
+        .filter((row) => this.numberValue(row.spend) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(row.date_start || '')))
+        .sort((a, b) => String(b.date_start).localeCompare(String(a.date_start)))[0];
+      return latest ? String(latest.date_start) : '';
+    } catch (error) {
+      this.logger.warn(`Meta account ${accountId} latest spend date failed: ${this.axiosDetail(error)}`);
       return '';
     }
   }
@@ -546,11 +604,6 @@ export class ExternalApisService {
     }
     const parsed = Date.parse(String(value || ''));
     return Number.isNaN(parsed) ? 0 : parsed;
-  }
-
-  private metaDateOnly(value: unknown): string {
-    const timestamp = this.metaEventTimestamp(value);
-    return timestamp > 0 ? new Date(timestamp).toISOString().slice(0, 10) : '';
   }
 
   private metaMoneyValue(value: unknown): number {
