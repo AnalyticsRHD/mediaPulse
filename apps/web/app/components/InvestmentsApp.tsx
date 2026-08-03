@@ -164,7 +164,16 @@ type CreditAllocationLine = {
   fecha: string;
   consumoAyer: number;
   consumoMes: number;
+  consumoPromedio8Dias: number;
+  diasCoberturaCredito: number | null;
 };
+
+function getCreditAvailabilityClass(days: number | null | undefined) {
+  if (days == null) return 'credit-availability-pending';
+  if (days > 7) return 'credit-availability-good';
+  if (days <= 3) return 'credit-availability-danger';
+  return 'credit-availability-warning';
+}
 
 type ManualForm = {
   anunciante: string;
@@ -1018,7 +1027,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
       try {
         const raw = localStorage.getItem('mediapulse-auth');
         if (!raw) {
-          router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/gestion' : '/control'}`);
+          router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/CreditAlloc' : '/control'}`);
           return;
         }
 
@@ -1030,7 +1039,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
 
         if (!response.ok) {
           localStorage.removeItem('mediapulse-auth');
-          router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/gestion' : '/control'}`);
+          router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/CreditAlloc' : '/control'}`);
           return;
         }
 
@@ -1045,7 +1054,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
         setViewAs(viewAsClients[email] ? email : GENERAL_VIEW);
       } catch {
         localStorage.removeItem('mediapulse-auth');
-        router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/gestion' : '/control'}`);
+        router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/CreditAlloc' : '/control'}`);
       } finally {
         setAuthLoading(false);
       }
@@ -1055,12 +1064,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   }, [initialTab, router]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken || activeTab === 'management') return;
     loadConsumptionSyncStatus().catch(() => undefined);
-  }, [authToken]);
+  }, [authToken, activeTab]);
 
   useEffect(() => {
-    if (!authToken || consumptionSyncStatus?.status !== 'running') return;
+    if (!authToken || activeTab === 'management' || consumptionSyncStatus?.status !== 'running') return;
 
     let cancelled = false;
     const interval = window.setInterval(async () => {
@@ -1077,22 +1086,22 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [authToken, consumptionSyncStatus?.status, datePreset, customRange, selectedRange.startDate, selectedRange.endDate]);
+  }, [authToken, activeTab, consumptionSyncStatus?.status, datePreset, customRange, selectedRange.startDate, selectedRange.endDate]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken || activeTab === 'management') return;
     loadInvestments().catch(() => setLoading(false));
-  }, [authToken, datePreset, selectedRange.startDate, selectedRange.endDate]);
+  }, [authToken, activeTab, datePreset, selectedRange.startDate, selectedRange.endDate]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken || activeTab === 'management') return;
     loadManualPreview().catch(() => undefined);
-  }, [authToken, previewMonth]);
+  }, [authToken, activeTab, previewMonth]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken || activeTab === 'management') return;
     loadManualHistory().catch(() => undefined);
-  }, [authToken]);
+  }, [authToken, activeTab]);
 
   useEffect(() => {
     if (!authToken || activeTab !== 'management' || authUser?.role !== 'ADMIN') return;
@@ -1495,8 +1504,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
           <p className="eyebrow">{isManagementView ? 'MediaPulse CA' : 'MediaPulse RHD'}</p>
           <h1>{isManagementView ? 'Credit Alloc' : 'Inversiones'}</h1>
         </div>
-        <div className="date-actions-stack">
-          <div className="date-actions">
+        {isManagementView ? (
+          <div className="user-pill">
+            <button type="button" onClick={handleLogout}>Salir</button>
+          </div>
+        ) : (
+          <div className="date-actions-stack">
+            <div className="date-actions">
             <label className="month-control view-as-control">
               Ver como
               <CustomSelect
@@ -1525,9 +1539,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
             <div className="user-pill">
               <button type="button" onClick={handleLogout}>Salir</button>
             </div>
+            </div>
+            <p className="last-sync">Ultima actualizacion: {formatLastUpdate(lastConsumptionSyncAt)}</p>
           </div>
-          <p className="last-sync">Ultima actualizacion: {formatLastUpdate(lastConsumptionSyncAt)}</p>
-        </div>
+        )}
       </header>
 
       <nav className="tabs" aria-label="Vistas de inversiones">
@@ -1538,8 +1553,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
          Forecast
         </button>
         {authUser.role === 'ADMIN' ? (
-          <button className={activeTab === 'management' ? 'active' : ''} onClick={() => router.push('/gestion')}>
-            Gestión
+          <button className={activeTab === 'management' ? 'active' : ''} onClick={() => router.push('/CreditAlloc')}>
+            CA
           </button>
         ) : null}
       </nav>
@@ -1583,7 +1598,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                       <strong>{line.accountName}</strong>
                       <span className="management-account-id">act_{line.accountId}</span>
                     </td>
-                    <td>{formatCreditMoney(line.creditoDisponible, line.currency)}</td>
+                    <td
+                      className={`credit-availability ${getCreditAvailabilityClass(line.diasCoberturaCredito)}`}
+                      title={line.diasCoberturaCredito == null
+                        ? 'Cobertura pendiente de actualizar'
+                        : `${formatDecimal(line.diasCoberturaCredito, 1)} dias de cobertura con un promedio diario de ${formatCreditMoney(line.consumoPromedio8Dias, line.currency)}`}
+                    >
+                      {formatCreditMoney(line.creditoDisponible, line.currency)}
+                    </td>
                     <td>{formatCreditMoney(line.montoCargado, line.currency)}</td>
                     <td>{line.fecha || '-'}</td>
                     <td>{formatCreditMoney(line.consumoAyer, line.currency)}</td>

@@ -17,7 +17,8 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
 
     const result = await this.pool.query(`
       SELECT plataforma, account_id, account_name, currency, credito_disponible,
-        monto_cargado, monto_cargado_updated_at, consumo_ayer, consumo_mes
+        monto_cargado, monto_cargado_updated_at, monto_cargado_date_source, consumo_ayer, consumo_mes,
+        consumo_promedio_8_dias, dias_cobertura_credito
       FROM credit_allocations
       ORDER BY consumo_ayer DESC, account_name ASC;
     `);
@@ -30,8 +31,11 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
       creditoDisponible: Number(row.credito_disponible || 0),
       montoCargado: Number(row.monto_cargado || 0),
       fecha: this.toDateOnly(row.monto_cargado_updated_at),
+      fechaSource: row.monto_cargado_date_source || undefined,
       consumoAyer: Number(row.consumo_ayer || 0),
-      consumoMes: Number(row.consumo_mes || 0)
+      consumoMes: Number(row.consumo_mes || 0),
+      consumoPromedio8Dias: Number(row.consumo_promedio_8_dias || 0),
+      diasCoberturaCredito: row.dias_cobertura_credito == null ? null : Number(row.dias_cobertura_credito)
     }));
   }
 
@@ -43,19 +47,33 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
       await this.pool.query(`
         INSERT INTO credit_allocations (
           plataforma, account_id, account_name, currency, credito_disponible,
-          monto_cargado, monto_cargado_updated_at, consumo_ayer, consumo_mes, last_synced_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_DATE, $7, $8, now())
+          monto_cargado, monto_cargado_updated_at, monto_cargado_date_source,
+          consumo_ayer, consumo_mes, consumo_promedio_8_dias, dias_cobertura_credito,
+          last_synced_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $9::date, $10, $7, $8, $11, $12, now())
         ON CONFLICT (plataforma, account_id) DO UPDATE SET
           account_name = EXCLUDED.account_name,
           currency = EXCLUDED.currency,
           credito_disponible = EXCLUDED.credito_disponible,
           monto_cargado_updated_at = CASE
+            WHEN EXCLUDED.monto_cargado_date_source = 'META_ACTIVITY' THEN EXCLUDED.monto_cargado_updated_at
             WHEN credit_allocations.monto_cargado IS DISTINCT FROM EXCLUDED.monto_cargado THEN CURRENT_DATE
+            WHEN credit_allocations.monto_cargado_updated_at IS NOT NULL THEN credit_allocations.monto_cargado_updated_at
+            WHEN EXCLUDED.monto_cargado_date_source = 'ACCOUNT_CREATED' THEN EXCLUDED.monto_cargado_updated_at
             ELSE credit_allocations.monto_cargado_updated_at
+          END,
+          monto_cargado_date_source = CASE
+            WHEN EXCLUDED.monto_cargado_date_source = 'META_ACTIVITY' THEN 'META_ACTIVITY'
+            WHEN credit_allocations.monto_cargado IS DISTINCT FROM EXCLUDED.monto_cargado THEN 'DETECTED'
+            WHEN credit_allocations.monto_cargado_updated_at IS NOT NULL THEN credit_allocations.monto_cargado_date_source
+            WHEN EXCLUDED.monto_cargado_date_source = 'ACCOUNT_CREATED' THEN 'ACCOUNT_CREATED'
+            ELSE credit_allocations.monto_cargado_date_source
           END,
           monto_cargado = EXCLUDED.monto_cargado,
           consumo_ayer = EXCLUDED.consumo_ayer,
           consumo_mes = EXCLUDED.consumo_mes,
+          consumo_promedio_8_dias = EXCLUDED.consumo_promedio_8_dias,
+          dias_cobertura_credito = EXCLUDED.dias_cobertura_credito,
           last_synced_at = now();
       `, [
         line.plataforma,
@@ -65,7 +83,11 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
         line.creditoDisponible,
         line.montoCargado,
         line.consumoAyer,
-        line.consumoMes
+        line.consumoMes,
+        line.fecha || null,
+        line.fecha ? (line.fechaSource || 'META_ACTIVITY') : null,
+        line.consumoPromedio8Dias,
+        line.diasCoberturaCredito
       ]);
     }
 
@@ -93,15 +115,25 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
           currency text NOT NULL,
           credito_disponible numeric NOT NULL DEFAULT 0,
           monto_cargado numeric NOT NULL DEFAULT 0,
-          monto_cargado_updated_at date NOT NULL DEFAULT CURRENT_DATE,
+          monto_cargado_updated_at date NULL,
+          monto_cargado_date_source text NULL,
           consumo_ayer numeric NOT NULL DEFAULT 0,
           consumo_mes numeric NOT NULL DEFAULT 0,
+          consumo_promedio_8_dias numeric NOT NULL DEFAULT 0,
+          dias_cobertura_credito numeric NULL,
           last_synced_at timestamptz NOT NULL DEFAULT now(),
           UNIQUE (plataforma, account_id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_credit_allocations_consumo_ayer
           ON credit_allocations (consumo_ayer DESC);
+
+        ALTER TABLE credit_allocations
+          ADD COLUMN IF NOT EXISTS monto_cargado_date_source text NULL,
+          ADD COLUMN IF NOT EXISTS consumo_promedio_8_dias numeric NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS dias_cobertura_credito numeric NULL,
+          ALTER COLUMN monto_cargado_updated_at DROP NOT NULL,
+          ALTER COLUMN monto_cargado_updated_at DROP DEFAULT;
       `);
     }
   }

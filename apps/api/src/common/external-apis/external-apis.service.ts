@@ -57,8 +57,11 @@ export type MetaCreditAllocation = {
   creditoDisponible: number;
   montoCargado: number;
   fecha: string;
+  fechaSource?: 'META_ACTIVITY' | 'DETECTED' | 'ACCOUNT_CREATED';
   consumoAyer: number;
   consumoMes: number;
+  consumoPromedio8Dias: number;
+  diasCoberturaCredito: number | null;
 };
 
 @Injectable()
@@ -313,35 +316,52 @@ export class ExternalApisService {
   }
 
   async fetchMetaCreditAllocations(): Promise<MetaCreditAllocation[]> {
-    const accessToken = this.configService.metaAccessToken;
+    const accessToken = this.configService.metaCreditAllocAccessToken;
     if (!accessToken) {
-      throw new ServiceUnavailableException('Meta access token is not configured');
+      throw new ServiceUnavailableException('META_ACCESS_TOKEN_ALLOC no esta configurado');
     }
 
     const accounts = await this.fetchMetaAccessibleAccounts(accessToken);
     const matchingAccounts = accounts.filter((account) => /linea|credit\s*alloc/i.test(String(account.name || '')));
-    const yesterday = this.previousDate(this.today());
-    const monthStart = this.monthStart(this.today());
+    const today = this.today();
+    const yesterday = this.previousDate(today);
+    const eightDayStart = this.shiftDate(today, -8);
+    const monthStart = this.monthStart(today);
+    const monthEnd = this.monthEnd(today);
 
     return Promise.all(matchingAccounts.map(async (account) => {
       const accountId = String(account.id || '').replace(/^act_/i, '');
-      const [consumoAyer, consumoMes] = await Promise.all([
+      const [consumoAyer, consumoMes, consumosDiariosUltimos8Dias, spendLimitUpdatedAt] = await Promise.all([
         this.fetchMetaAccountSpend(accountId, yesterday, yesterday, accessToken),
-        this.fetchMetaAccountSpend(accountId, monthStart, yesterday, accessToken)
+        this.fetchMetaAccountSpend(accountId, monthStart, monthEnd, accessToken),
+        this.fetchMetaAccountDailySpend(accountId, eightDayStart, today, accessToken),
+        this.fetchMetaSpendLimitUpdatedAt(accountId, accessToken)
       ]);
       const montoCargado = this.metaMoneyValue(account.spend_cap);
       const amountSpent = this.metaMoneyValue(account.amount_spent);
+      const creditoDisponible = this.round2(Math.max(montoCargado - amountSpent, 0));
+      const consumoPromedio8Dias = consumosDiariosUltimos8Dias.length > 0
+        ? this.round2(
+          consumosDiariosUltimos8Dias.reduce((sum, dailySpend) => sum + dailySpend, 0)
+            / consumosDiariosUltimos8Dias.length
+        )
+        : 0;
 
       return {
         plataforma: 'META' as const,
         accountId,
         accountName: String(account.name || accountId),
         currency: String(account.currency || 'USD'),
-        creditoDisponible: this.round2(Math.max(montoCargado - amountSpent, 0)),
+        creditoDisponible,
         montoCargado: this.round2(montoCargado),
-        fecha: this.today(),
+        fecha: spendLimitUpdatedAt || this.metaDateOnly(account.created_time),
+        fechaSource: spendLimitUpdatedAt ? 'META_ACTIVITY' : 'ACCOUNT_CREATED',
         consumoAyer: this.round2(consumoAyer),
-        consumoMes: this.round2(consumoMes)
+        consumoMes: this.round2(consumoMes),
+        consumoPromedio8Dias,
+        diasCoberturaCredito: consumoPromedio8Dias > 0
+          ? this.round2(creditoDisponible / consumoPromedio8Dias)
+          : null
       };
     }));
   }
@@ -448,6 +468,89 @@ export class ExternalApisService {
       this.logger.warn(`Meta account ${accountId} spend failed: ${this.axiosDetail(error)}`);
       return 0;
     }
+  }
+
+  private async fetchMetaAccountDailySpend(
+    accountId: string,
+    startDate: string,
+    endDate: string,
+    accessToken: string
+  ): Promise<number[]> {
+    if (endDate < startDate) return [];
+    try {
+      const rows = await this.fetchMetaPagedData(
+        `${this.configService.metaApiBaseUrl}/act_${accountId}/insights`,
+        {
+          access_token: accessToken,
+          level: 'account',
+          fields: 'spend,date_start,date_stop',
+          time_range: JSON.stringify({ since: startDate, until: endDate }),
+          time_increment: 1,
+          limit: 100
+        }
+      );
+
+      return rows
+        .sort((a, b) => String(a.date_start || '').localeCompare(String(b.date_start || '')))
+        .map((row) => this.numberValue(row.spend));
+    } catch (error) {
+      this.logger.warn(`Meta account ${accountId} daily spend failed: ${this.axiosDetail(error)}`);
+      return [];
+    }
+  }
+
+  private async fetchMetaSpendLimitUpdatedAt(accountId: string, accessToken: string): Promise<string> {
+    try {
+      const activities = await this.fetchMetaPagedData(
+        `${this.configService.metaApiBaseUrl}/act_${accountId}/activities`,
+        {
+          access_token: accessToken,
+          fields: 'event_time,event_type,translated_event_type,extra_data',
+          limit: 500
+        }
+      );
+      const spendLimitActivity = activities
+        .filter((activity) => {
+          const eventType = String(activity.event_type || '').toLowerCase();
+          if (
+            eventType === 'ad_account_update_spend_limit'
+            || eventType === 'ad_account_reset_spend_limit'
+          ) return true;
+
+          const searchable = [
+            eventType,
+            activity.translated_event_type,
+            typeof activity.extra_data === 'string' ? activity.extra_data : JSON.stringify(activity.extra_data || {})
+          ].join(' ').toLowerCase();
+          return [
+            /(spend|spending).*(limit|cap)|(limit|cap).*(spend|spending)/i,
+            /(gasto).*(l[ií]mite|tope)|(l[ií]mite|tope).*(gasto)/i,
+            /spend[_\s-]*cap|account[_\s-]*spend[_\s-]*limit/i
+          ].some((pattern) => pattern.test(searchable));
+        })
+        .sort((a, b) => this.metaEventTimestamp(b.event_time) - this.metaEventTimestamp(a.event_time))[0];
+
+      const timestamp = this.metaEventTimestamp(spendLimitActivity?.event_time);
+      return timestamp > 0 ? new Date(timestamp).toISOString().slice(0, 10) : '';
+    } catch (error) {
+      this.logger.warn(`Meta account ${accountId} spend limit history failed: ${this.axiosDetail(error)}`);
+      return '';
+    }
+  }
+
+  private metaEventTimestamp(value: unknown): number {
+    if (typeof value === 'number') return value > 10_000_000_000 ? value : value * 1000;
+    if (/^\d+$/.test(String(value || ''))) {
+      const numeric = Number(value);
+      return numeric > 10_000_000_000 ? numeric : numeric * 1000;
+    }
+    const parsed = Date.parse(String(value || ''));
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  private metaDateOnly(value: unknown): string {
+    const timestamp = this.metaEventTimestamp(value);
+    return timestamp > 0 ? new Date(timestamp).toISOString().slice(0, 10) : '';
   }
 
   private metaMoneyValue(value: unknown): number {
@@ -2335,6 +2438,18 @@ export class ExternalApisService {
 
   private monthStart(date: string): string {
     return `${date.slice(0, 7)}-01`;
+  }
+
+  private shiftDate(date: string, days: number): string {
+    const value = new Date(`${date}T00:00:00.000Z`);
+    value.setUTCDate(value.getUTCDate() + days);
+    return value.toISOString().slice(0, 10);
+  }
+
+  private monthEnd(date: string): string {
+    const year = Number(date.slice(0, 4));
+    const month = Number(date.slice(5, 7));
+    return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
   }
 
   private round2(value: number): number {

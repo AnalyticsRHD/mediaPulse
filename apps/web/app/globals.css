@@ -417,6 +417,30 @@ h2 {
   font-size: 11px;
 }
 
+.management-table td.credit-availability {
+  font-weight: 800;
+}
+
+.management-table td.credit-availability-danger {
+  background: #f8d7da;
+  color: #842029;
+}
+
+.management-table td.credit-availability-warning {
+  background: #ffe5b4;
+  color: #7a4b00;
+}
+
+.management-table td.credit-availability-good {
+  background: #d9f0cc;
+  color: #185f25;
+}
+
+.management-table td.credit-availability-pending {
+  background: transparent;
+  color: inherit;
+}
+
 .summary-strip {
   display: grid;
   grid-template-columns: repeat(7, minmax(130px, 1fr));

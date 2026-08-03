@@ -19,6 +19,10 @@ export class ConfigService {
     return this.cleanPlaceholder(process.env.META_ACCESS_TOKEN || '');
   }
 
+  get metaCreditAllocAccessToken(): string {
+    return this.cleanPlaceholder(process.env.META_ACCESS_TOKEN_ALLOC || '');
+  }
+
   get metaApiBaseUrl(): string {
     return process.env.META_API_BASE_URL || 'https://graph.facebook.com/v21.0';
   }
