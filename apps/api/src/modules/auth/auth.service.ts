@@ -74,6 +74,15 @@ export class AuthService {
     return user;
   }
 
+  async requireAdmin(authorization?: string): Promise<AuthUser> {
+    const user = await this.requireUser(authorization);
+    if (user.role !== 'ADMIN') {
+      throw new ForbiddenException('Solo ADMIN puede acceder a Gestion');
+    }
+
+    return user;
+  }
+
   async createUser(dto: CreateUserDto, authorization?: string): Promise<AuthUser> {
     const usersCount = await this.authRepository.countActiveUsers();
     try {

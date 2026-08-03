@@ -55,6 +55,7 @@ type DatePreset = typeof datePresetOptions[number]['value'];
 type DateRange = { startDate: string; endDate: string };
 type CustomDateRange = DateRange;
 type ControlFilterKey = 'anunciante' | 'marca' | 'moneda' | 'plataforma' | 'objetivo';
+type OpenFilterKey = ControlFilterKey | 'managementPlatform';
 type ControlFilters = Record<ControlFilterKey, string>;
 type SortDirection = 'asc' | 'desc';
 type SortKey =
@@ -81,6 +82,7 @@ type SelectOption = {
 };
 
 type UserRole = 'ADMIN' | 'MEDIA' | 'CLIENT';
+type InvestmentTab = 'control' | 'manual' | 'management';
 
 type AuthUser = {
   id: string;
@@ -150,6 +152,18 @@ type InvestmentResponse = {
     completion: number;
   };
   lines: InvestmentLine[];
+};
+
+type CreditAllocationLine = {
+  plataforma: 'META';
+  accountId: string;
+  accountName: string;
+  currency: string;
+  creditoDisponible: number;
+  montoCargado: number;
+  fecha: string;
+  consumoAyer: number;
+  consumoMes: number;
 };
 
 type ManualForm = {
@@ -445,6 +459,18 @@ function isInactiveClient(value: string) {
     || normalizedClient.includes('BACCHET');
 }
 
+function formatCreditMoney(value: number, currency: string) {
+  try {
+    return new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: currency || 'USD',
+      maximumFractionDigits: currency === 'USD' ? 2 : 0
+    }).format(value);
+  } catch {
+    return `${currency || 'USD'} ${formatDecimal(value)}`;
+  }
+}
+
 function getViewAllowedClients(viewAs: string): Set<string> | null {
   const clients = viewAsClients[viewAs];
   if (!clients) return null;
@@ -660,15 +686,18 @@ function getDeviationClass(value: number) {
   return 'deviation-cell';
 }
 
-export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual' }) {
+export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const router = useRouter();
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authToken, setAuthToken] = useState('');
   const [authLoading, setAuthLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'control' | 'manual'>(initialTab);
+  const [activeTab, setActiveTab] = useState<InvestmentTab>(initialTab);
   const [data, setData] = useState<InvestmentResponse | null>(null);
   const [manualData, setManualData] = useState<InvestmentResponse | null>(null);
   const [manualHistory, setManualHistory] = useState<ManualHistoryLine[]>([]);
+  const [creditAllocations, setCreditAllocations] = useState<CreditAllocationLine[]>([]);
+  const [creditAllocationsLoading, setCreditAllocationsLoading] = useState(false);
+  const [managementPlatformFilter, setManagementPlatformFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
@@ -697,13 +726,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [controlFilters, setControlFilters] = useState<ControlFilters>(emptyControlFilters);
-  const [openControlFilter, setOpenControlFilter] = useState<ControlFilterKey | null>(null);
+  const [openControlFilter, setOpenControlFilter] = useState<OpenFilterKey | null>(null);
   const [controlSort, setControlSort] = useState<ControlSort>(null);
   const [openSelectId, setOpenSelectId] = useState<string | null>(null);
   const [previewClientFilter, setPreviewClientFilter] = useState('');
   const [previewBrandFilter, setPreviewBrandFilter] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const canManageManualLines = authUser?.role === 'ADMIN' || authUser?.role === 'MEDIA';
+  const isManagementView = activeTab === 'management';
 
   const selectedRange = useMemo(
     () => getDateRange(datePreset, customRange),
@@ -757,6 +787,16 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       return controlSort.direction === 'asc' ? result : -result;
     });
   }, [scopedControlData, controlFilters, controlSort]);
+  const managementPlatformOptions = useMemo(
+    () => uniqueValues(creditAllocations.map((line) => line.plataforma)).sort(),
+    [creditAllocations]
+  );
+  const filteredCreditAllocations = useMemo(
+    () => creditAllocations
+      .filter((line) => !managementPlatformFilter || line.plataforma === managementPlatformFilter)
+      .sort((a, b) => b.consumoAyer - a.consumoAyer || a.accountName.localeCompare(b.accountName)),
+    [creditAllocations, managementPlatformFilter]
+  );
   const controlCurrencyTotals = useMemo(() => getControlCurrencyTotals(filteredControlLines), [filteredControlLines]);
   const previewBrands = useMemo(() => {
     const lines = scopedManualData?.lines ?? [];
@@ -896,6 +936,23 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     }
   }
 
+  async function loadCreditAllocations(sync = false) {
+    setCreditAllocationsLoading(true);
+    setErrorMessage('');
+    try {
+      const payload = await requestJson<CreditAllocationLine[]>(
+        `${API_BASE}/investments/management/credit-allocations${sync ? '/sync' : ''}`,
+        { cache: 'no-store', method: sync ? 'POST' : 'GET' }
+      );
+      setCreditAllocations(payload);
+    } catch (error) {
+      setCreditAllocations([]);
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudieron cargar las lineas de credito');
+    } finally {
+      setCreditAllocationsLoading(false);
+    }
+  }
+
   async function openLineHistory(line: InvestmentLine) {
     setHistoryModalLine(line);
     setLineHistory([]);
@@ -961,7 +1018,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
       try {
         const raw = localStorage.getItem('mediapulse-auth');
         if (!raw) {
-          router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : '/control'}`);
+          router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/gestion' : '/control'}`);
           return;
         }
 
@@ -973,18 +1030,22 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
 
         if (!response.ok) {
           localStorage.removeItem('mediapulse-auth');
-          router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : '/control'}`);
+          router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/gestion' : '/control'}`);
           return;
         }
 
         const user = await response.json() as AuthUser;
+        if (initialTab === 'management' && user.role !== 'ADMIN') {
+          router.replace('/control');
+          return;
+        }
         setAuthToken(session.token);
         setAuthUser(user);
         const email = user.email.toLowerCase();
         setViewAs(viewAsClients[email] ? email : GENERAL_VIEW);
       } catch {
         localStorage.removeItem('mediapulse-auth');
-        router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : '/control'}`);
+        router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/gestion' : '/control'}`);
       } finally {
         setAuthLoading(false);
       }
@@ -1032,6 +1093,11 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     if (!authToken) return;
     loadManualHistory().catch(() => undefined);
   }, [authToken]);
+
+  useEffect(() => {
+    if (!authToken || activeTab !== 'management' || authUser?.role !== 'ADMIN') return;
+    loadCreditAllocations().catch(() => undefined);
+  }, [authToken, activeTab, authUser?.role]);
 
   useEffect(() => {
     setPreviewClientFilter('');
@@ -1426,8 +1492,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">MediaPulse RHD</p>
-          <h1>Inversiones</h1>
+          <p className="eyebrow">{isManagementView ? 'MediaPulse CA' : 'MediaPulse RHD'}</p>
+          <h1>{isManagementView ? 'Credit Alloc' : 'Inversiones'}</h1>
         </div>
         <div className="date-actions-stack">
           <div className="date-actions">
@@ -1471,11 +1537,74 @@ export function InvestmentsApp({ initialTab }: { initialTab: 'control' | 'manual
         <button className={activeTab === 'manual' ? 'active' : ''} onClick={() => router.push('/carga-manual')}>
          Forecast
         </button>
+        {authUser.role === 'ADMIN' ? (
+          <button className={activeTab === 'management' ? 'active' : ''} onClick={() => router.push('/gestion')}>
+            Gestión
+          </button>
+        ) : null}
       </nav>
 
       {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
 
-      {activeTab === 'control' ? (
+      {activeTab === 'management' ? (
+        <section className="management-workspace" aria-label="Gestión de Credit Alloc">
+          <div className="management-toolbar">
+            <button className="secondary-button" type="button" onClick={() => loadCreditAllocations(true)} disabled={creditAllocationsLoading}>
+              {creditAllocationsLoading ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+          <div className="table-wrap">
+            <table className="management-table">
+              <thead>
+                <tr>
+                  <FilterHeader
+                    filterKey="managementPlatform"
+                    label="Plataforma"
+                    value={managementPlatformFilter}
+                    options={managementPlatformOptions}
+                    formatOptionLabel={formatPlatformLabel}
+                    openFilter={openControlFilter}
+                    onToggle={setOpenControlFilter}
+                    onChange={setManagementPlatformFilter}
+                  />
+                  <th>Cuenta (Ad Account)</th>
+                  <th>Credito Disponible</th>
+                  <th>Monto Cargado</th>
+                  <th>Fecha</th>
+                  <th>Consumo Diario (consumo ayer)</th>
+                  <th>Consumo (este mes)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCreditAllocations.map((line) => (
+                  <tr key={line.accountId}>
+                    <td><span className={`platform ${platformClassName(line.plataforma)}`}>{formatPlatformLabel(line.plataforma)}</span></td>
+                    <td>
+                      <strong>{line.accountName}</strong>
+                      <span className="management-account-id">act_{line.accountId}</span>
+                    </td>
+                    <td>{formatCreditMoney(line.creditoDisponible, line.currency)}</td>
+                    <td>{formatCreditMoney(line.montoCargado, line.currency)}</td>
+                    <td>{line.fecha || '-'}</td>
+                    <td>{formatCreditMoney(line.consumoAyer, line.currency)}</td>
+                    <td>{formatCreditMoney(line.consumoMes, line.currency)}</td>
+                  </tr>
+                ))}
+                {!creditAllocationsLoading && filteredCreditAllocations.length === 0 ? (
+                  <tr>
+                    <td className="empty" colSpan={7}>{creditAllocations.length === 0 ? 'No se encontraron cuentas con LINEA o Credit Alloc en el nombre.' : 'No hay cuentas para la plataforma seleccionada.'}</td>
+                  </tr>
+                ) : null}
+                {creditAllocationsLoading && creditAllocations.length === 0 ? (
+                  <tr>
+                    <td className="empty" colSpan={7}>Consultando cuentas de Meta...</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : activeTab === 'control' ? (
         <section className="workspace">
           <SummaryStrip
             data={scopedControlData}
@@ -2536,13 +2665,13 @@ function FilterHeader({
   onToggle,
   onChange
 }: {
-  filterKey: ControlFilterKey;
+  filterKey: OpenFilterKey;
   label: string;
   value: string;
   options: string[];
   formatOptionLabel?: (option: string) => string;
-  openFilter: ControlFilterKey | null;
-  onToggle: (filter: ControlFilterKey | null) => void;
+  openFilter: OpenFilterKey | null;
+  onToggle: (filter: OpenFilterKey | null) => void;
   onChange: (value: string) => void;
 }) {
   const isOpen = openFilter === filterKey;

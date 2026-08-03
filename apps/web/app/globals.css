@@ -386,9 +386,35 @@ h2 {
 }
 
 .workspace,
-.manual-grid {
+.manual-grid,
+.management-workspace {
   display: grid;
   gap: 18px;
+}
+
+.management-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+}
+
+.management-table th,
+.management-table td {
+  text-align: left;
+  vertical-align: middle;
+}
+
+.management-table th:not(:nth-child(2)),
+.management-table td:not(:nth-child(2)) {
+  text-align: center;
+}
+
+.management-account-id {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .summary-strip {

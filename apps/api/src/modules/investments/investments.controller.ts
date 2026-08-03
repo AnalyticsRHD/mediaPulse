@@ -2,13 +2,33 @@ import { BadRequestException, Body, Controller, Delete, Get, Headers, NotFoundEx
 import { InvestmentsService } from './investments.service';
 import { ManualInvestmentDto } from './dto/manual-investment.dto';
 import { AuthService } from '../auth/auth.service';
+import { ExternalApisService } from '../../common/external-apis/external-apis.service';
+import { CreditAllocationsRepository } from './credit-allocations.repository';
 
 @Controller('investments')
 export class InvestmentsController {
   constructor(
     private readonly investmentsService: InvestmentsService,
-    private readonly authService: AuthService
+    private readonly authService: AuthService,
+    private readonly externalApisService: ExternalApisService,
+    private readonly creditAllocationsRepository: CreditAllocationsRepository
   ) {}
+
+  @Get('management/credit-allocations')
+  async getCreditAllocations(@Headers('authorization') authorization?: string) {
+    await this.authService.requireAdmin(authorization);
+    const cached = await this.creditAllocationsRepository.findAll();
+    if (cached.length > 0) return cached;
+    const fetched = await this.externalApisService.fetchMetaCreditAllocations();
+    return this.creditAllocationsRepository.upsertAll(fetched);
+  }
+
+  @Post('management/credit-allocations/sync')
+  async syncCreditAllocations(@Headers('authorization') authorization?: string) {
+    await this.authService.requireAdmin(authorization);
+    const fetched = await this.externalApisService.fetchMetaCreditAllocations();
+    return this.creditAllocationsRepository.upsertAll(fetched);
+  }
 
   @Get()
   getInvestments(

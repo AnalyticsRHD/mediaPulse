@@ -49,6 +49,18 @@ type MercadoLibreOAuthState = {
   updatedAt: string;
 };
 
+export type MetaCreditAllocation = {
+  plataforma: 'META';
+  accountId: string;
+  accountName: string;
+  currency: string;
+  creditoDisponible: number;
+  montoCargado: number;
+  fecha: string;
+  consumoAyer: number;
+  consumoMes: number;
+};
+
 @Injectable()
 export class ExternalApisService {
   private logger = new Logger('ExternalApisService');
@@ -298,6 +310,148 @@ export class ExternalApisService {
     }
 
     return metrics;
+  }
+
+  async fetchMetaCreditAllocations(): Promise<MetaCreditAllocation[]> {
+    const accessToken = this.configService.metaAccessToken;
+    if (!accessToken) {
+      throw new ServiceUnavailableException('Meta access token is not configured');
+    }
+
+    const accounts = await this.fetchMetaAccessibleAccounts(accessToken);
+    const matchingAccounts = accounts.filter((account) => /linea|credit\s*alloc/i.test(String(account.name || '')));
+    const yesterday = this.previousDate(this.today());
+    const monthStart = this.monthStart(this.today());
+
+    return Promise.all(matchingAccounts.map(async (account) => {
+      const accountId = String(account.id || '').replace(/^act_/i, '');
+      const [consumoAyer, consumoMes] = await Promise.all([
+        this.fetchMetaAccountSpend(accountId, yesterday, yesterday, accessToken),
+        this.fetchMetaAccountSpend(accountId, monthStart, yesterday, accessToken)
+      ]);
+      const montoCargado = this.metaMoneyValue(account.spend_cap);
+      const amountSpent = this.metaMoneyValue(account.amount_spent);
+
+      return {
+        plataforma: 'META' as const,
+        accountId,
+        accountName: String(account.name || accountId),
+        currency: String(account.currency || 'USD'),
+        creditoDisponible: this.round2(Math.max(montoCargado - amountSpent, 0)),
+        montoCargado: this.round2(montoCargado),
+        fecha: this.today(),
+        consumoAyer: this.round2(consumoAyer),
+        consumoMes: this.round2(consumoMes)
+      };
+    }));
+  }
+
+  private async fetchMetaAccessibleAccounts(accessToken: string): Promise<any[]> {
+    const accounts = new Map<string, any>();
+    const accountFields = 'id,name,currency,spend_cap,amount_spent,balance,created_time,account_status';
+
+    try {
+      try {
+        const businesses = await this.fetchMetaPagedData(
+          `${this.configService.metaApiBaseUrl}/me/businesses`,
+          { access_token: accessToken, fields: 'id,name', limit: 100 }
+        );
+        for (const business of businesses) {
+          const businessId = String(business.id || '');
+          if (!businessId) continue;
+          const [ownedAccounts, clientAccounts] = await Promise.all([
+            this.fetchMetaPagedData(
+              `${this.configService.metaApiBaseUrl}/${businessId}/owned_ad_accounts`,
+              { access_token: accessToken, fields: accountFields, limit: 500 }
+            ),
+            this.fetchMetaPagedData(
+              `${this.configService.metaApiBaseUrl}/${businessId}/client_ad_accounts`,
+              { access_token: accessToken, fields: accountFields, limit: 500 }
+            )
+          ]);
+          for (const account of [...ownedAccounts, ...clientAccounts]) {
+            accounts.set(String(account.id || '').replace(/^act_/i, ''), account);
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`Meta Business Manager listing failed, using assigned accounts: ${this.axiosDetail(error)}`);
+      }
+
+      const assignedAccounts = await this.fetchMetaPagedData(
+        `${this.configService.metaApiBaseUrl}/me/adaccounts`,
+        { access_token: accessToken, fields: accountFields, limit: 500 }
+      );
+      for (const account of assignedAccounts) {
+        accounts.set(String(account.id || '').replace(/^act_/i, ''), account);
+      }
+
+      const missingConfiguredIds = this.configService.metaAccountIds.filter((id) => !accounts.has(id));
+      const configuredAccounts = await Promise.all(missingConfiguredIds.map(async (accountId) => {
+        try {
+          const response = await axios.get(`${this.configService.metaApiBaseUrl}/act_${accountId}`, {
+            params: {
+              access_token: accessToken,
+              fields: 'id,name,currency,spend_cap,amount_spent,balance,created_time,account_status'
+            },
+            timeout: Math.min(this.configService.metaSyncTimeoutSeconds * 1000, 20000)
+          });
+          return response.data;
+        } catch (error) {
+          this.logger.warn(`Meta account ${accountId} details failed: ${this.axiosDetail(error)}`);
+          return null;
+        }
+      }));
+      for (const account of configuredAccounts.filter(Boolean)) {
+        accounts.set(String(account.id || '').replace(/^act_/i, ''), account);
+      }
+    } catch (error) {
+      this.logger.error(`Meta account listing failed: ${this.axiosDetail(error)}`);
+      throw new BadGatewayException('No se pudieron consultar las cuentas de Meta');
+    }
+
+    return Array.from(accounts.values());
+  }
+
+  private async fetchMetaPagedData(url: string, initialParams: Record<string, any>): Promise<any[]> {
+    const rows: any[] = [];
+    let nextUrl = url;
+    let params: Record<string, any> | undefined = initialParams;
+
+    while (nextUrl) {
+      const response = await axios.get(nextUrl, {
+        params,
+        timeout: Math.min(this.configService.metaSyncTimeoutSeconds * 1000, 20000)
+      });
+      rows.push(...(response.data?.data || []));
+      nextUrl = response.data?.paging?.next || '';
+      params = undefined;
+    }
+
+    return rows;
+  }
+
+  private async fetchMetaAccountSpend(accountId: string, startDate: string, endDate: string, accessToken: string): Promise<number> {
+    if (endDate < startDate) return 0;
+    try {
+      const response = await axios.get(`${this.configService.metaApiBaseUrl}/act_${accountId}/insights`, {
+        params: {
+          access_token: accessToken,
+          level: 'account',
+          fields: 'spend',
+          time_range: JSON.stringify({ since: startDate, until: endDate }),
+          limit: 10
+        },
+        timeout: Math.min(this.configService.metaSyncTimeoutSeconds * 1000, 20000)
+      });
+      return (response.data?.data || []).reduce((sum: number, row: any) => sum + this.numberValue(row.spend), 0);
+    } catch (error) {
+      this.logger.warn(`Meta account ${accountId} spend failed: ${this.axiosDetail(error)}`);
+      return 0;
+    }
+  }
+
+  private metaMoneyValue(value: unknown): number {
+    return this.numberValue(value) / 100;
   }
 
   private async fetchMetaAccountInsights(accountId: string, startDate: string, endDate: string, accessToken: string): Promise<any[]> {
