@@ -27,7 +27,7 @@ export class BrandMappingService {
     { cliente: 'ZONA FRANCA', marca: 'Zona Franca' },
     { cliente: 'TV5', marca: 'TV5' },
     { cliente: 'IMQ', marca: 'Imq' },
-    // { cliente: 'CASA BACHETTII ZANOTTI', marca: 'Casa Bachettii' },
+    { cliente: 'CABRALES', marca: 'Cabrales' },
     // { cliente: 'MEDNET', marca: 'Mednet' },
     { cliente: 'LONDON', marca: 'DF_AS_Ushuaia' },
     { cliente: 'LONDON', marca: 'DF_AS_Rio Grande' },
@@ -137,10 +137,15 @@ export class BrandMappingService {
       await this.brandMappingRepository.seed(this.defaultMappings);
       const databaseMappings = await this.brandMappingRepository.findAll();
       if (databaseMappings.length > 0 || this.brandMappingRepository.enabled) {
-        this.mappings = databaseMappings;
+        this.mappings = databaseMappings.filter((mapping) => !this.isInactiveClient(mapping.cliente));
       }
     } catch {
       this.mappings = this.defaultMappings;
     }
+  }
+
+  private isInactiveClient(cliente: string): boolean {
+    const normalizedClient = this.normalize(cliente).replace(/\s+/g, '');
+    return normalizedClient.includes('bachet') || normalizedClient.includes('bacchet');
   }
 }

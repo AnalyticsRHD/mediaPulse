@@ -35,10 +35,6 @@ const allObjectiveOptions = uniqueValues([
 ]);
 const GENERAL_VIEW = 'general';
 const inactiveClientNames = [
-  'BACCHETTI',
-  'BACHETTI',
-  'CASA BACCHETTII ZANOTTI',
-  'CASA BACHETTI ZANOTTI',
   'ORMIFLEX',
   'LP'
 ];
@@ -443,7 +439,10 @@ function normalizeClientName(value: string) {
 
 function isInactiveClient(value: string) {
   const inactiveClients = new Set(inactiveClientNames.map(normalizeClientName));
-  return inactiveClients.has(normalizeClientName(value));
+  const normalizedClient = normalizeClientName(value).replace(/\s+/g, '');
+  return inactiveClients.has(normalizeClientName(value))
+    || normalizedClient.includes('BACHET')
+    || normalizedClient.includes('BACCHET');
 }
 
 function getViewAllowedClients(viewAs: string): Set<string> | null {
