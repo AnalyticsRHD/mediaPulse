@@ -168,13 +168,14 @@ type InvestmentResponse = {
 };
 
 type CreditAllocationLine = {
-  plataforma: 'META';
+  plataforma: 'META' | 'Google' | 'TikTok';
   accountId: string;
   accountName: string;
   currency: string;
   creditoDisponible: number;
   montoCargado: number;
   fecha: string;
+  fechaSource?: 'META_ACTIVITY' | 'DETECTED' | 'MANUAL';
   consumoAyer: number;
   consumoMes: number;
   consumoPromedio8Dias: number;
@@ -494,7 +495,7 @@ function formatCreditMoney(value: number, currency: string) {
     return new Intl.NumberFormat('es-AR', {
       style: 'currency',
       currency: currency || 'USD',
-      maximumFractionDigits: currency === 'USD' ? 2 : 0
+      maximumFractionDigits: 2
     }).format(value);
   } catch {
     return `${currency || 'USD'} ${formatDecimal(value)}`;
@@ -762,6 +763,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const [controlSort, setControlSort] = useState<ControlSort>(null);
   const [managementSort, setManagementSort] = useState<ManagementSort>(null);
   const [managementAccountSearch, setManagementAccountSearch] = useState('');
+  const [editingCreditDateKey, setEditingCreditDateKey] = useState<string | null>(null);
+  const [creditDateDraft, setCreditDateDraft] = useState('');
+  const [creditDateSaving, setCreditDateSaving] = useState(false);
   const [openSelectId, setOpenSelectId] = useState<string | null>(null);
   const [previewClientFilter, setPreviewClientFilter] = useState('');
   const [previewBrandFilter, setPreviewBrandFilter] = useState('');
@@ -997,7 +1001,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
         { cache: 'no-store', method: sync ? 'POST' : 'GET' }
       );
       setCreditAllocations((current) => append
-        ? Array.from(new Map([...current, ...payload.items].map((line) => [line.accountId, line])).values())
+        ? Array.from(new Map(
+          [...current, ...payload.items].map((line) => [`${line.plataforma}:${line.accountId}`, line])
+        ).values())
         : payload.items);
       setCreditAllocationsPage(payload.page);
       setCreditAllocationsHasMore(payload.hasMore);
@@ -1009,6 +1015,33 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudieron cargar las lineas de credito');
     } finally {
       setCreditAllocationsLoading(false);
+    }
+  }
+
+  async function saveCreditAllocationDate(line: CreditAllocationLine) {
+    if (!creditDateDraft) return;
+    setCreditDateSaving(true);
+    setErrorMessage('');
+    try {
+      const updated = await requestJson<{ fecha: string; fechaSource: CreditAllocationLine['fechaSource'] }>(
+        `${API_BASE}/investments/management/credit-allocations/${encodeURIComponent(line.plataforma)}/${encodeURIComponent(line.accountId)}/date`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: creditDateDraft })
+        }
+      );
+      setCreditAllocations((current) => current.map((item) => (
+        item.plataforma === line.plataforma && item.accountId === line.accountId
+          ? { ...item, fecha: updated.fecha, fechaSource: updated.fechaSource }
+          : item
+      )));
+      setEditingCreditDateKey(null);
+      setCreditDateDraft('');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudo guardar la fecha');
+    } finally {
+      setCreditDateSaving(false);
     }
   }
 
@@ -1687,7 +1720,33 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                       {formatCreditMoney(line.creditoDisponible, line.currency)}
                     </td>
                     <td>{formatCreditMoney(line.montoCargado, line.currency)}</td>
-                    <td>{line.fecha || '-'}</td>
+                    <td className="credit-date-cell">
+                      {editingCreditDateKey === `${line.plataforma}:${line.accountId}` ? (
+                        <span className="credit-date-editor">
+                          <input
+                            type="date"
+                            value={creditDateDraft}
+                            onChange={(event) => setCreditDateDraft(event.target.value)}
+                            disabled={creditDateSaving}
+                            aria-label={`Fecha de monto cargado para ${line.accountName}`}
+                          />
+                          <button type="button" onClick={() => saveCreditAllocationDate(line)} disabled={!creditDateDraft || creditDateSaving}>✓</button>
+                          <button type="button" onClick={() => setEditingCreditDateKey(null)} disabled={creditDateSaving}>×</button>
+                        </span>
+                      ) : (
+                        <button
+                          className="credit-date-value"
+                          type="button"
+                          title={`${line.fechaSource === 'MANUAL' ? 'Fecha manual' : line.fechaSource === 'DETECTED' ? 'Fecha detectada por MediaPulse' : line.fechaSource === 'META_ACTIVITY' ? 'Fecha informada por Meta' : 'Sin fecha disponible'}. Click para editar.`}
+                          onClick={() => {
+                            setEditingCreditDateKey(`${line.plataforma}:${line.accountId}`);
+                            setCreditDateDraft(line.fecha || '');
+                          }}
+                        >
+                          {line.fecha || '-'}{line.fechaSource === 'MANUAL' ? ' *' : ''}
+                        </button>
+                      )}
+                    </td>
                     <td>{formatCreditMoney(line.consumoAyer, line.currency)}</td>
                     <td>{formatCreditMoney(line.consumoMes, line.currency)}</td>
                   </tr>
@@ -1699,7 +1758,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                 ) : null}
                 {creditAllocationsLoading && creditAllocations.length === 0 ? (
                   <tr>
-                    <td className="empty" colSpan={7}>Consultando cuentas de Meta...</td>
+                    <td className="empty" colSpan={7}>Consultando cuentas de las plataformas...</td>
                   </tr>
                 ) : null}
               </tbody>

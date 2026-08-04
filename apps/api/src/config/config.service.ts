@@ -35,6 +35,14 @@ export class ConfigService {
       .filter(Boolean);
   }
 
+  get metaBusinessIds(): string[] {
+    const raw = process.env.META_BUSINESS_IDS || process.env.META_BUSINESS_ID || '';
+    return raw
+      .split(',')
+      .map((value) => this.cleanPlaceholder(value).trim())
+      .filter(Boolean);
+  }
+
   get metaSyncTimeoutSeconds(): number {
     return parseInt(process.env.META_SYNC_TIMEOUT_SECONDS || '120', 10);
   }
@@ -191,6 +199,13 @@ export class ConfigService {
 
   get mercadoLibreAdvertiserIds(): string[] {
     return (process.env.MERCADO_LIBRE_ADVERTISER_IDS || '')
+      .split(',')
+      .map((value) => this.cleanPlaceholder(value))
+      .filter(Boolean);
+  }
+
+  get tiktokBusinessCenterIds(): string[] {
+    return (process.env.TIKTOK_BUSINESS_CENTER_IDS || process.env.TIKTOK_BUSINESS_CENTER_ID || '')
       .split(',')
       .map((value) => this.cleanPlaceholder(value))
       .filter(Boolean);

@@ -465,6 +465,46 @@ h2 {
   filter: invert(1);
 }
 
+.credit-date-value {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 4px 6px;
+}
+
+.credit-date-value:hover,
+.credit-date-value:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.credit-date-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.credit-date-editor input {
+  width: 132px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  padding: 0 6px;
+}
+
+.credit-date-editor button {
+  min-width: 28px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 800;
+}
+
 .management-table td.credit-availability {
   font-weight: 800;
 }

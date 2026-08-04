@@ -25,7 +25,7 @@ export class InvestmentsController {
     const limit = Math.min(100, Math.max(1, Number(limitValue) || 30));
     const cachedPage = await this.creditAllocationsRepository.findPage(page, limit);
     if (cachedPage.total > 0) return cachedPage;
-    const fetched = await this.externalApisService.fetchMetaCreditAllocations();
+    const fetched = await this.externalApisService.fetchCreditAllocations();
     await this.creditAllocationsRepository.upsertAll(fetched);
     return this.creditAllocationsRepository.findPage(page, limit);
   }
@@ -37,11 +37,28 @@ export class InvestmentsController {
     @Query('limit') limitValue?: string
   ) {
     await this.authService.requireAdmin(authorization);
-    const fetched = await this.externalApisService.fetchMetaCreditAllocations();
+    const fetched = await this.externalApisService.fetchCreditAllocations();
     await this.creditAllocationsRepository.upsertAll(fetched);
     const page = Math.max(1, Number(pageValue) || 1);
     const limit = Math.min(100, Math.max(1, Number(limitValue) || 30));
     return this.creditAllocationsRepository.findPage(page, limit);
+  }
+
+  @Patch('management/credit-allocations/:platform/:accountId/date')
+  async updateCreditAllocationDate(
+    @Param('platform') platform: string,
+    @Param('accountId') accountId: string,
+    @Body() body: { date?: string },
+    @Headers('authorization') authorization?: string
+  ) {
+    await this.authService.requireAdmin(authorization);
+    const date = String(body?.date || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+      throw new BadRequestException('Fecha invalida');
+    }
+    const updated = await this.creditAllocationsRepository.updateManualDate(platform, accountId, date);
+    if (!updated) throw new NotFoundException('Cuenta de Credit Alloc no encontrada');
+    return updated;
   }
 
   @Get()

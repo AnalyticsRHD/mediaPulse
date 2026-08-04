@@ -50,14 +50,14 @@ type MercadoLibreOAuthState = {
 };
 
 export type MetaCreditAllocation = {
-  plataforma: 'META';
+  plataforma: 'META' | 'Google' | 'TikTok';
   accountId: string;
   accountName: string;
   currency: string;
   creditoDisponible: number;
   montoCargado: number;
   fecha: string;
-  fechaSource?: 'META_ACTIVITY' | 'DETECTED';
+  fechaSource?: 'META_ACTIVITY' | 'DETECTED' | 'MANUAL';
   consumoAyer: number;
   consumoMes: number;
   consumoPromedio8Dias: number;
@@ -327,42 +327,395 @@ export class ExternalApisService {
     const yesterday = this.previousDate(today);
     const eightDayStart = this.shiftDate(today, -8);
     const monthStart = this.monthStart(today);
-    const monthEnd = this.monthEnd(today);
+    const insightsStart = monthStart < eightDayStart ? monthStart : eightDayStart;
 
-    return Promise.all(matchingAccounts.map(async (account) => {
-      const accountId = String(account.id || '').replace(/^act_/i, '');
-      const [consumoAyer, consumoMes, consumosDiariosUltimos8Dias, latestActivityAt] = await Promise.all([
-        this.fetchMetaAccountSpend(accountId, yesterday, yesterday, accessToken),
-        this.fetchMetaAccountSpend(accountId, monthStart, monthEnd, accessToken),
-        this.fetchMetaAccountDailySpend(accountId, eightDayStart, today, accessToken),
-        this.fetchMetaLatestActivityAt(accountId, accessToken)
-      ]);
-      const montoCargado = this.metaMoneyValue(account.spend_cap);
-      const amountSpent = this.metaMoneyValue(account.amount_spent);
-      const creditoDisponible = this.round2(Math.max(montoCargado - amountSpent, 0));
-      const consumoPromedio8Dias = consumosDiariosUltimos8Dias.length > 0
-        ? this.round2(
-          consumosDiariosUltimos8Dias.reduce((sum, dailySpend) => sum + dailySpend, 0)
-            / consumosDiariosUltimos8Dias.length
-        )
+    const out: MetaCreditAllocation[] = [];
+    // Graph Batch admite hasta 50 subconsultas. Enviamos Insights + latest activity
+    // para 25 cuentas por request, evitando cientos de conexiones simultaneas.
+    for (const batch of this.chunkArray(matchingAccounts, 25)) {
+      const requests = batch.flatMap((account) => {
+        const accountId = String(account.id || '').replace(/^act_/i, '');
+        const insightsParams = new URLSearchParams({
+          level: 'account',
+          fields: 'spend,date_start,date_stop',
+          time_range: JSON.stringify({ since: insightsStart, until: today }),
+          time_increment: '1',
+          limit: '100'
+        });
+        const activityParams = new URLSearchParams({ fields: 'event_time', limit: '1' });
+        return [
+          { key: `insights:${accountId}`, relativeUrl: `act_${accountId}/insights?${insightsParams}` },
+          { key: `activity:${accountId}`, relativeUrl: `act_${accountId}/activities?${activityParams}` }
+        ];
+      });
+      const responses = await this.fetchMetaBatch(requests, accessToken);
+
+      const rows = batch.map((account): MetaCreditAllocation | null => {
+        const accountId = String(account.id || '').replace(/^act_/i, '');
+        const insights = responses.get(`insights:${accountId}`);
+        if (!insights?.ok) {
+          this.logger.warn(`Meta Credit Alloc account ${accountId} skipped to preserve cached values: ${insights?.error || 'missing batch response'}`);
+          return null;
+        }
+
+        try {
+          const dailySpend: Array<{ date: string; spend: number }> = (Array.isArray(insights.data?.data) ? insights.data.data : [])
+            .map((row: any) => ({
+              date: String(row.date_start || '').slice(0, 10),
+              spend: this.numberValue(row.spend)
+            }))
+            .sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date));
+          const activity = responses.get(`activity:${accountId}`);
+          const activityTimestamp = activity?.ok
+            ? this.metaEventTimestamp(activity.data?.data?.[0]?.event_time)
+            : 0;
+          const latestActivityAt = activityTimestamp > 0
+            ? new Date(activityTimestamp).toISOString().slice(0, 10)
+            : '';
+          const consumoAyer = dailySpend.find((row) => row.date === yesterday)?.spend || 0;
+          const consumoMes = dailySpend
+            .filter((row) => row.date >= monthStart && row.date <= today)
+            .reduce((sum, row) => sum + row.spend, 0);
+          const consumosDiariosUltimos8Dias = dailySpend
+            .filter((row) => row.date >= eightDayStart && row.date <= today);
+          const montoCargado = this.metaMoneyValue(account.spend_cap);
+          const amountSpent = this.metaMoneyValue(account.amount_spent);
+          const creditoDisponible = this.round2(Math.max(montoCargado - amountSpent, 0));
+          const consumoPromedio8Dias = consumosDiariosUltimos8Dias.length > 0
+            ? this.round2(
+              consumosDiariosUltimos8Dias.reduce((sum, row) => sum + row.spend, 0)
+                / consumosDiariosUltimos8Dias.length
+            )
+            : 0;
+
+          return {
+            plataforma: 'META',
+            accountId,
+            accountName: String(account.name || accountId),
+            currency: String(account.currency || 'USD'),
+            creditoDisponible,
+            montoCargado: this.round2(montoCargado),
+            fecha: latestActivityAt || dailySpend[dailySpend.length - 1]?.date || '',
+            fechaSource: latestActivityAt || dailySpend.length > 0 ? 'META_ACTIVITY' : undefined,
+            consumoAyer: this.round2(consumoAyer),
+            consumoMes: this.round2(consumoMes),
+            consumoPromedio8Dias,
+            diasCoberturaCredito: consumoPromedio8Dias > 0
+              ? this.round2(creditoDisponible / consumoPromedio8Dias)
+              : null
+          };
+        } catch (error) {
+          this.logger.warn(`Meta Credit Alloc account ${accountId} skipped to preserve cached values: ${this.axiosDetail(error)}`);
+          return null;
+        }
+      });
+      out.push(...rows.filter((row): row is MetaCreditAllocation => row !== null));
+    }
+    return out;
+  }
+
+  async fetchCreditAllocations(): Promise<MetaCreditAllocation[]> {
+    const results = await Promise.allSettled([
+      this.fetchMetaCreditAllocations(),
+      this.fetchGoogleCreditAllocations(),
+      this.fetchTikTokCreditAllocations()
+    ]);
+
+    return results.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
+  }
+
+  private async fetchGoogleCreditAllocations(): Promise<MetaCreditAllocation[]> {
+    const configuredCustomerIds = this.configService.googleAdsCustomerIds;
+    const managerCustomerId = this.configService.googleAdsLoginCustomerId;
+    if (
+      !this.configService.googleAdsDeveloperToken
+      || !this.configService.googleAdsClientId
+      || !this.configService.googleAdsClientSecret
+      || !this.configService.googleAdsRefreshToken
+      || (configuredCustomerIds.length === 0 && !managerCustomerId)
+    ) return [];
+
+    const accessToken = await this.fetchGoogleAdsAccessToken(true);
+    const today = this.today();
+    const yesterday = this.previousDate(today);
+    const rangeStart = this.shiftDate(today, -8);
+    const monthStart = this.monthStart(today);
+    const out: MetaCreditAllocation[] = [];
+    const customers = new Map<string, { name: string; currency: string }>();
+
+    if (managerCustomerId) {
+      const hierarchyRows = await this.searchGoogleAdsCustomer(managerCustomerId, `
+        SELECT
+          customer_client.id,
+          customer_client.descriptive_name,
+          customer_client.currency_code,
+          customer_client.manager,
+          customer_client.status,
+          customer_client.level
+        FROM customer_client
+        WHERE customer_client.status = 'ENABLED'
+      `.replace(/\s+/g, ' ').trim(), accessToken, true);
+      for (const row of hierarchyRows) {
+        const client = row.customerClient || row.customer_client || {};
+        if (client.manager) continue;
+        const id = String(client.id || '').replace(/\D/g, '');
+        if (!id) continue;
+        customers.set(id, {
+          name: String(client.descriptiveName || client.descriptive_name || ''),
+          currency: String(client.currencyCode || client.currency_code || 'USD')
+        });
+      }
+    }
+
+    for (const customerId of configuredCustomerIds) {
+      if (customers.has(customerId)) continue;
+      const customerRows = await this.searchGoogleAdsCustomer(
+        customerId,
+        'SELECT customer.id, customer.descriptive_name, customer.currency_code FROM customer',
+        accessToken,
+        true
+      );
+      const customer = customerRows[0]?.customer;
+      if (!customer) continue;
+      customers.set(customerId, {
+        name: String(customer.descriptiveName || customer.descriptive_name || ''),
+        currency: String(customer.currencyCode || customer.currency_code || 'USD')
+      });
+    }
+
+    for (const [customerId, customer] of customers) {
+      const accountName = customer.name;
+      if (!/credit_alloc/i.test(accountName)) continue;
+
+      const budgetRows = await this.searchGoogleAdsCustomer(customerId, `
+        SELECT
+          account_budget.status,
+          account_budget.approved_spending_limit_micros,
+          account_budget.adjusted_spending_limit_micros,
+          account_budget.amount_served_micros,
+          account_budget.approved_start_date_time,
+          account_budget.proposed_start_date_time
+        FROM account_budget
+        WHERE account_budget.status = 'APPROVED'
+      `.replace(/\s+/g, ' ').trim(), accessToken, true);
+      const budgets = budgetRows.map((row) => row.accountBudget || row.account_budget || {});
+      const budget = budgets.sort((a, b) => (
+        String(b.approvedStartDateTime || b.approved_start_date_time || b.proposedStartDateTime || b.proposed_start_date_time || '')
+          .localeCompare(String(a.approvedStartDateTime || a.approved_start_date_time || a.proposedStartDateTime || a.proposed_start_date_time || ''))
+      ))[0];
+      if (!budget) continue;
+
+      const dailySpend = await this.fetchGoogleAccountDailySpend(customerId, rangeStart, today, accessToken);
+      const monthSpend = await this.fetchGoogleAccountDailySpend(customerId, monthStart, today, accessToken);
+      const montoCargado = this.numberValue(
+        budget.adjustedSpendingLimitMicros
+        || budget.adjusted_spending_limit_micros
+        || budget.approvedSpendingLimitMicros
+        || budget.approved_spending_limit_micros
+      ) / 1_000_000;
+      const amountServed = this.numberValue(budget.amountServedMicros || budget.amount_served_micros) / 1_000_000;
+      const consumoPromedio8Dias = dailySpend.length
+        ? this.round2(dailySpend.reduce((sum, row) => sum + row.spend, 0) / dailySpend.length)
         : 0;
+      const creditoDisponible = this.round2(Math.max(montoCargado - amountServed, 0));
+      const fecha = String(
+        budget.approvedStartDateTime
+        || budget.approved_start_date_time
+        || budget.proposedStartDateTime
+        || budget.proposed_start_date_time
+        || ''
+      ).slice(0, 10);
 
-      return {
-        plataforma: 'META' as const,
-        accountId,
-        accountName: String(account.name || accountId),
-        currency: String(account.currency || 'USD'),
+      out.push({
+        plataforma: 'Google',
+        accountId: customerId,
+        accountName,
+        currency: customer.currency,
         creditoDisponible,
         montoCargado: this.round2(montoCargado),
-        fecha: latestActivityAt,
-        fechaSource: latestActivityAt ? 'META_ACTIVITY' : undefined,
-        consumoAyer: this.round2(consumoAyer),
-        consumoMes: this.round2(consumoMes),
+        fecha,
+        fechaSource: fecha ? 'META_ACTIVITY' : undefined,
+        consumoAyer: this.round2(dailySpend.find((row) => row.date === yesterday)?.spend || 0),
+        consumoMes: this.round2(monthSpend.reduce((sum, row) => sum + row.spend, 0)),
         consumoPromedio8Dias,
         diasCoberturaCredito: consumoPromedio8Dias > 0
           ? this.round2(creditoDisponible / consumoPromedio8Dias)
           : null
-      };
+      });
+    }
+
+    return out;
+  }
+
+  private async fetchGoogleAccountDailySpend(
+    customerId: string,
+    startDate: string,
+    endDate: string,
+    accessToken: string
+  ): Promise<Array<{ date: string; spend: number }>> {
+    const rows = await this.searchGoogleAdsCustomer(customerId, `
+      SELECT segments.date, metrics.cost_micros
+      FROM customer
+      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    `.replace(/\s+/g, ' ').trim(), accessToken, true);
+    return rows.map((row) => ({
+      date: String(row.segments?.date || ''),
+      spend: this.numberValue(row.metrics?.costMicros || row.metrics?.cost_micros) / 1_000_000
+    }));
+  }
+
+  private async fetchTikTokCreditAllocations(): Promise<MetaCreditAllocation[]> {
+    const accessToken = this.configService.tiktokAccessToken;
+    if (!accessToken) return [];
+    const names = await this.fetchTikTokAdvertiserNames(accessToken, true);
+    const matchingIds = Array.from(names.entries())
+      .filter(([, name]) => /linea/i.test(name))
+      .map(([advertiserId]) => advertiserId);
+    if (matchingIds.length === 0) return [];
+
+    try {
+      const infoResponse = await axios.get(`${this.configService.tiktokApiBaseUrl}/advertiser/info/`, {
+        headers: { 'Access-Token': accessToken },
+        params: {
+          advertiser_ids: JSON.stringify(matchingIds),
+          fields: JSON.stringify(['advertiser_id', 'name', 'currency', 'create_time'])
+        },
+        timeout: 0
+      });
+      if (infoResponse.data?.code !== 0) {
+        this.logger.warn(`TikTok Credit Alloc unavailable: ${infoResponse.data?.message || `code ${infoResponse.data?.code}`}`);
+        return [];
+      }
+      const infoList = infoResponse.data?.data?.list || [];
+      const infoById = new Map<string, any>(infoList.map((item: any) => [String(item.advertiser_id), item]));
+      const balances = await this.fetchTikTokAdvertiserBalances(accessToken, new Set(matchingIds));
+      const today = this.today();
+      const yesterday = this.previousDate(today);
+      const monthStart = this.monthStart(today);
+      const rangeStart = this.shiftDate(today, -8);
+      const insightsStart = monthStart < rangeStart ? monthStart : rangeStart;
+      const out: MetaCreditAllocation[] = [];
+
+      for (const advertiserId of matchingIds) {
+        const balance = balances.get(advertiserId);
+        if (!balance) continue;
+        const dailySpend = await this.fetchTikTokAdvertiserDailySpend(
+          advertiserId, insightsStart, today, accessToken
+        );
+        const recent = dailySpend.filter((row) => row.date >= rangeStart && row.date <= today);
+        const consumoPromedio8Dias = recent.length
+          ? this.round2(recent.reduce((sum, row) => sum + row.spend, 0) / recent.length)
+          : 0;
+        const creditoDisponible = this.numberValue(
+          balance.balance ?? balance.available_balance ?? balance.availableBalance ?? balance.cash_balance
+        );
+        const montoCargado = this.numberValue(
+          balance.budget ?? balance.total_budget ?? balance.totalBudget ?? balance.account_budget
+        );
+        const info = infoById.get(advertiserId) || {};
+        const fecha = String(
+          balance.update_time ?? balance.updated_at ?? balance.create_time ?? info.create_time ?? ''
+        ).slice(0, 10);
+
+        out.push({
+          plataforma: 'TikTok',
+          accountId: advertiserId,
+          accountName: String(info.name || names.get(advertiserId) || advertiserId),
+          currency: String(balance.currency || info.currency || 'USD'),
+          creditoDisponible: this.round2(creditoDisponible),
+          montoCargado: this.round2(montoCargado),
+          fecha: /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha : '',
+          fechaSource: /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? 'META_ACTIVITY' : undefined,
+          consumoAyer: this.round2(dailySpend.find((row) => row.date === yesterday)?.spend || 0),
+          consumoMes: this.round2(dailySpend
+            .filter((row) => row.date >= monthStart && row.date <= today)
+            .reduce((sum, row) => sum + row.spend, 0)),
+          consumoPromedio8Dias,
+          diasCoberturaCredito: consumoPromedio8Dias > 0
+            ? this.round2(creditoDisponible / consumoPromedio8Dias)
+            : null
+        });
+      }
+      return out;
+    } catch (error) {
+      this.logger.warn(`TikTok Credit Alloc unavailable: ${this.axiosDetail(error)}`);
+      return [];
+    }
+  }
+
+  private async fetchTikTokAdvertiserBalances(
+    accessToken: string,
+    advertiserIds: Set<string>
+  ): Promise<Map<string, any>> {
+    const balances = new Map<string, any>();
+    const businessCenterIds = new Set(this.configService.tiktokBusinessCenterIds);
+    try {
+      const bcResponse = await axios.get(`${this.configService.tiktokApiBaseUrl}/bc/get/`, {
+        headers: { 'Access-Token': accessToken },
+        params: { page: 1, page_size: 1000 },
+        timeout: 0
+      });
+      if (bcResponse.data?.code !== 0) {
+        throw new Error(bcResponse.data?.message || `TikTok Business Center code ${bcResponse.data?.code}`);
+      }
+      for (const item of bcResponse.data?.data?.list || []) {
+        const id = String(item.bc_id || item.business_center_id || '');
+        if (id) businessCenterIds.add(id);
+      }
+    } catch (error) {
+      this.logger.warn(`TikTok Business Center discovery failed: ${this.axiosDetail(error)}`);
+    }
+
+    for (const bcId of businessCenterIds) {
+      let page = 1;
+      let totalPages = 1;
+      do {
+        const response = await axios.get(`${this.configService.tiktokApiBaseUrl}/advertiser/balance/get/`, {
+          headers: { 'Access-Token': accessToken },
+          params: { bc_id: bcId, page, page_size: 1000 },
+          timeout: 0
+        });
+        if (response.data?.code !== 0) {
+          throw new Error(response.data?.message || `TikTok balance code ${response.data?.code}`);
+        }
+        for (const item of response.data?.data?.list || []) {
+          const id = String(item.advertiser_id || '');
+          if (id && advertiserIds.has(id)) balances.set(id, item);
+        }
+        totalPages = Number(response.data?.data?.page_info?.total_page || 1) || 1;
+        page += 1;
+      } while (page <= totalPages);
+    }
+    return balances;
+  }
+
+  private async fetchTikTokAdvertiserDailySpend(
+    advertiserId: string,
+    startDate: string,
+    endDate: string,
+    accessToken: string
+  ): Promise<Array<{ date: string; spend: number }>> {
+    const response = await axios.get(`${this.configService.tiktokApiBaseUrl}/report/integrated/get/`, {
+      headers: { 'Access-Token': accessToken },
+      params: {
+        advertiser_id: advertiserId,
+        report_type: 'BASIC',
+        data_level: 'AUCTION_ADVERTISER',
+        dimensions: JSON.stringify(['stat_time_day']),
+        metrics: JSON.stringify(['spend']),
+        start_date: startDate,
+        end_date: endDate,
+        page: 1,
+        page_size: 1000
+      },
+      timeout: 0
+    });
+    if (response.data?.code !== 0) {
+      throw new Error(response.data?.message || `TikTok reporting code ${response.data?.code}`);
+    }
+    return (response.data?.data?.list || []).map((item: any) => ({
+      date: String(item.dimensions?.stat_time_day || item.stat_time_day || '').slice(0, 10),
+      spend: this.numberValue(item.metrics?.spend ?? item.spend)
     }));
   }
 
@@ -372,21 +725,28 @@ export class ExternalApisService {
 
     try {
       try {
-        const businesses = await this.fetchMetaPagedData(
+        const discoveredBusinesses = await this.fetchMetaPagedData(
           `${this.configService.metaApiBaseUrl}/me/businesses`,
-          { access_token: accessToken, fields: 'id,name', limit: 100 }
+          { access_token: accessToken, fields: 'id,name', limit: 100 },
+          0
         );
+        const businesses = Array.from(new Map([
+          ...discoveredBusinesses,
+          ...this.configService.metaBusinessIds.map((id) => ({ id }))
+        ].map((business) => [String(business.id || ''), business])).values());
         for (const business of businesses) {
           const businessId = String(business.id || '');
           if (!businessId) continue;
           const [ownedAccounts, clientAccounts] = await Promise.all([
             this.fetchMetaPagedData(
               `${this.configService.metaApiBaseUrl}/${businessId}/owned_ad_accounts`,
-              { access_token: accessToken, fields: accountFields, limit: 500 }
+              { access_token: accessToken, fields: accountFields, limit: 500 },
+              0
             ),
             this.fetchMetaPagedData(
               `${this.configService.metaApiBaseUrl}/${businessId}/client_ad_accounts`,
-              { access_token: accessToken, fields: accountFields, limit: 500 }
+              { access_token: accessToken, fields: accountFields, limit: 500 },
+              0
             )
           ]);
           for (const account of [...ownedAccounts, ...clientAccounts]) {
@@ -399,7 +759,8 @@ export class ExternalApisService {
 
       const assignedAccounts = await this.fetchMetaPagedData(
         `${this.configService.metaApiBaseUrl}/me/adaccounts`,
-        { access_token: accessToken, fields: accountFields, limit: 500 }
+        { access_token: accessToken, fields: accountFields, limit: 500 },
+        0
       );
       for (const account of assignedAccounts) {
         accounts.set(String(account.id || '').replace(/^act_/i, ''), account);
@@ -413,7 +774,7 @@ export class ExternalApisService {
               access_token: accessToken,
               fields: 'id,name,currency,spend_cap,amount_spent,balance,created_time,account_status'
             },
-            timeout: Math.min(this.configService.metaSyncTimeoutSeconds * 1000, 20000)
+            timeout: 0
           });
           return response.data;
         } catch (error) {
@@ -432,7 +793,51 @@ export class ExternalApisService {
     return Array.from(accounts.values());
   }
 
-  private async fetchMetaPagedData(url: string, initialParams: Record<string, any>): Promise<any[]> {
+  private async fetchMetaBatch(
+    requests: Array<{ key: string; relativeUrl: string }>,
+    accessToken: string
+  ): Promise<Map<string, { ok: boolean; data?: any; error?: string }>> {
+    const results = new Map<string, { ok: boolean; data?: any; error?: string }>();
+    if (requests.length === 0) return results;
+
+    const form = new URLSearchParams();
+    form.set('access_token', accessToken);
+    form.set('include_headers', 'false');
+    form.set('batch', JSON.stringify(requests.map((request) => ({
+      method: 'GET',
+      relative_url: request.relativeUrl
+    }))));
+
+    const response = await axios.post(this.configService.metaApiBaseUrl, form.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 0
+    });
+    const batchResponses = Array.isArray(response.data) ? response.data : [];
+
+    requests.forEach((request, index) => {
+      const item = batchResponses[index];
+      let body: any;
+      try {
+        body = typeof item?.body === 'string' ? JSON.parse(item.body) : item?.body;
+      } catch {
+        body = undefined;
+      }
+      if (item?.code >= 200 && item?.code < 300 && body && !body.error) {
+        results.set(request.key, { ok: true, data: body });
+      } else {
+        const error = body?.error?.message || `Graph batch status ${item?.code || 'missing'}`;
+        results.set(request.key, { ok: false, error });
+      }
+    });
+
+    return results;
+  }
+
+  private async fetchMetaPagedData(
+    url: string,
+    initialParams: Record<string, any>,
+    timeoutMs = Math.min(this.configService.metaSyncTimeoutSeconds * 1000, 20000)
+  ): Promise<any[]> {
     const rows: any[] = [];
     let nextUrl = url;
     let params: Record<string, any> | undefined = initialParams;
@@ -440,7 +845,7 @@ export class ExternalApisService {
     while (nextUrl) {
       const response = await axios.get(nextUrl, {
         params,
-        timeout: Math.min(this.configService.metaSyncTimeoutSeconds * 1000, 20000)
+        timeout: timeoutMs
       });
       rows.push(...(response.data?.data || []));
       nextUrl = response.data?.paging?.next || '';
@@ -466,7 +871,7 @@ export class ExternalApisService {
       return (response.data?.data || []).reduce((sum: number, row: any) => sum + this.numberValue(row.spend), 0);
     } catch (error) {
       this.logger.warn(`Meta account ${accountId} spend failed: ${this.axiosDetail(error)}`);
-      return 0;
+      throw error;
     }
   }
 
@@ -475,7 +880,7 @@ export class ExternalApisService {
     startDate: string,
     endDate: string,
     accessToken: string
-  ): Promise<number[]> {
+  ): Promise<Array<{ date: string; spend: number }>> {
     if (endDate < startDate) return [];
     try {
       const rows = await this.fetchMetaPagedData(
@@ -492,56 +897,34 @@ export class ExternalApisService {
 
       return rows
         .sort((a, b) => String(a.date_start || '').localeCompare(String(b.date_start || '')))
-        .map((row) => this.numberValue(row.spend));
+        .map((row) => ({
+          date: String(row.date_start || '').slice(0, 10),
+          spend: this.numberValue(row.spend)
+        }));
     } catch (error) {
       this.logger.warn(`Meta account ${accountId} daily spend failed: ${this.axiosDetail(error)}`);
-      return [];
+      throw error;
     }
   }
 
   private async fetchMetaLatestActivityAt(accountId: string, accessToken: string): Promise<string> {
     try {
-      const activities = await this.fetchMetaPagedData(
-        `${this.configService.metaApiBaseUrl}/act_${accountId}/activities`,
-        {
+      const response = await axios.get(
+        `${this.configService.metaApiBaseUrl}/act_${accountId}/activities`, {
+        params: {
           access_token: accessToken,
-          fields: 'event_time,event_type,translated_event_type,extra_data',
-          limit: 500
-        }
-      );
-      const latestActivity = activities
-        .sort((a, b) => this.metaEventTimestamp(b.event_time) - this.metaEventTimestamp(a.event_time))[0];
+          fields: 'event_time',
+          limit: 1
+        },
+        timeout: 8000
+      });
+      const latestActivity = Array.isArray(response.data?.data) ? response.data.data[0] : undefined;
       const latestTimestamp = this.metaEventTimestamp(latestActivity?.event_time);
       if (latestTimestamp > 0) return new Date(latestTimestamp).toISOString().slice(0, 10);
-
-      const spendLimitActivity = activities
-        .filter((activity) => {
-          const eventType = String(activity.event_type || '').toLowerCase();
-          if (
-            eventType === 'ad_account_update_spend_limit'
-            || eventType === 'ad_account_reset_spend_limit'
-          ) return true;
-
-          const searchable = [
-            eventType,
-            activity.translated_event_type,
-            typeof activity.extra_data === 'string' ? activity.extra_data : JSON.stringify(activity.extra_data || {})
-          ].join(' ').toLowerCase();
-          return [
-            /(spend|spending).*(limit|cap)|(limit|cap).*(spend|spending)/i,
-            /(gasto).*(l[ií]mite|tope)|(l[ií]mite|tope).*(gasto)/i,
-            /spend[_\s-]*cap|account[_\s-]*spend[_\s-]*limit/i
-          ].some((pattern) => pattern.test(searchable));
-        })
-        .sort((a, b) => this.metaEventTimestamp(b.event_time) - this.metaEventTimestamp(a.event_time))[0];
-
-      const timestamp = this.metaEventTimestamp(spendLimitActivity?.event_time);
-      return timestamp > 0
-        ? new Date(timestamp).toISOString().slice(0, 10)
-        : this.fetchMetaLatestSpendDate(accountId, accessToken);
+      return '';
     } catch (error) {
       this.logger.warn(`Meta account ${accountId} latest activity failed: ${this.axiosDetail(error)}`);
-      return this.fetchMetaLatestActivityByCategory(accountId, accessToken);
+      return '';
     }
   }
 
@@ -790,7 +1173,7 @@ export class ExternalApisService {
     return metrics;
   }
 
-  private async fetchGoogleAdsAccessToken(): Promise<string> {
+  private async fetchGoogleAdsAccessToken(noTimeout = false): Promise<string> {
     try {
       const response = await axios.post(
         'https://oauth2.googleapis.com/token',
@@ -802,7 +1185,7 @@ export class ExternalApisService {
         }).toString(),
         {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          timeout: this.configService.googleAdsSyncTimeoutSeconds * 1000
+          timeout: noTimeout ? 0 : this.configService.googleAdsSyncTimeoutSeconds * 1000
         }
       );
 
@@ -817,7 +1200,12 @@ export class ExternalApisService {
     }
   }
 
-  private async searchGoogleAdsCustomer(customerId: string, query: string, accessToken: string): Promise<any[]> {
+  private async searchGoogleAdsCustomer(
+    customerId: string,
+    query: string,
+    accessToken: string,
+    noTimeout = false
+  ): Promise<any[]> {
     try {
       const headers: Record<string, string> = {
         Authorization: `Bearer ${accessToken}`,
@@ -835,7 +1223,7 @@ export class ExternalApisService {
         { query },
         {
           headers,
-          timeout: this.configService.googleAdsSyncTimeoutSeconds * 1000
+          timeout: noTimeout ? 0 : this.configService.googleAdsSyncTimeoutSeconds * 1000
         }
       );
 
@@ -2509,7 +2897,7 @@ export class ExternalApisService {
     return Math.round(value * 100) / 100;
   }
 
-  private async fetchTikTokAdvertiserNames(accessToken: string): Promise<Map<string, string>> {
+  private async fetchTikTokAdvertiserNames(accessToken: string, noTimeout = false): Promise<Map<string, string>> {
     const appId = this.configService.tiktokAppId;
     const secret = this.configService.tiktokAppSecret;
     const names = new Map<string, string>();
@@ -2523,7 +2911,7 @@ export class ExternalApisService {
           app_id: appId,
           secret
         },
-        timeout: this.configService.tiktokSyncTimeoutSeconds * 1000
+        timeout: noTimeout ? 0 : this.configService.tiktokSyncTimeoutSeconds * 1000
       });
 
       const list = response.data?.data?.list || [];

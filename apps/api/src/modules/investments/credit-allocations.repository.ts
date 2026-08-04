@@ -20,11 +20,11 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
         monto_cargado, monto_cargado_updated_at, monto_cargado_date_source, consumo_ayer, consumo_mes,
         consumo_promedio_8_dias, dias_cobertura_credito
       FROM credit_allocations
-      ORDER BY consumo_ayer DESC, account_name ASC;
+      ORDER BY consumo_ayer DESC, account_name ASC, plataforma ASC, account_id ASC;
     `);
 
     return result.rows.map((row) => ({
-      plataforma: String(row.plataforma) as 'META',
+      plataforma: String(row.plataforma) as MetaCreditAllocation['plataforma'],
       accountId: String(row.account_id),
       accountName: String(row.account_name),
       currency: String(row.currency),
@@ -50,14 +50,14 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
           monto_cargado, monto_cargado_updated_at, monto_cargado_date_source, consumo_ayer, consumo_mes,
           consumo_promedio_8_dias, dias_cobertura_credito
         FROM credit_allocations
-        ORDER BY consumo_ayer DESC, account_name ASC
+        ORDER BY consumo_ayer DESC, account_name ASC, plataforma ASC, account_id ASC
         LIMIT $1 OFFSET $2;
       `, [limit, offset]),
       this.pool.query('SELECT COUNT(*)::int AS total FROM credit_allocations;')
     ]);
     const total = Number(countResult.rows[0]?.total || 0);
     const items = result.rows.map((row) => ({
-      plataforma: String(row.plataforma) as 'META',
+      plataforma: String(row.plataforma) as MetaCreditAllocation['plataforma'],
       accountId: String(row.account_id),
       accountName: String(row.account_name),
       currency: String(row.currency),
@@ -72,6 +72,26 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
     }));
 
     return { items, total, page, limit, hasMore: offset + items.length < total };
+  }
+
+  async updateManualDate(plataforma: string, accountId: string, date: string) {
+    await this.init();
+    if (!this.pool) throw new ServiceUnavailableException('La base de datos no esta configurada');
+    const result = await this.pool.query(`
+      UPDATE credit_allocations
+      SET monto_cargado_updated_at = $3::date,
+          monto_cargado_date_source = 'MANUAL'
+      WHERE lower(plataforma) = lower($1) AND account_id = $2
+      RETURNING account_id, plataforma, monto_cargado_updated_at, monto_cargado_date_source;
+    `, [plataforma, accountId, date]);
+    if (result.rowCount === 0) return null;
+    const row = result.rows[0];
+    return {
+      accountId: String(row.account_id),
+      plataforma: String(row.plataforma),
+      fecha: this.toDateOnly(row.monto_cargado_updated_at),
+      fechaSource: String(row.monto_cargado_date_source)
+    };
   }
 
   async upsertAll(lines: MetaCreditAllocation[]): Promise<MetaCreditAllocation[]> {
@@ -91,6 +111,7 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
           currency = EXCLUDED.currency,
           credito_disponible = EXCLUDED.credito_disponible,
           monto_cargado_updated_at = CASE
+            WHEN credit_allocations.monto_cargado_date_source = 'MANUAL' THEN credit_allocations.monto_cargado_updated_at
             WHEN EXCLUDED.monto_cargado_date_source = 'META_ACTIVITY' THEN EXCLUDED.monto_cargado_updated_at
             WHEN credit_allocations.monto_cargado IS DISTINCT FROM EXCLUDED.monto_cargado THEN CURRENT_DATE
             WHEN credit_allocations.monto_cargado_date_source = 'ACCOUNT_CREATED' THEN NULL
@@ -98,6 +119,7 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
             ELSE credit_allocations.monto_cargado_updated_at
           END,
           monto_cargado_date_source = CASE
+            WHEN credit_allocations.monto_cargado_date_source = 'MANUAL' THEN 'MANUAL'
             WHEN EXCLUDED.monto_cargado_date_source = 'META_ACTIVITY' THEN 'META_ACTIVITY'
             WHEN credit_allocations.monto_cargado IS DISTINCT FROM EXCLUDED.monto_cargado THEN 'DETECTED'
             WHEN credit_allocations.monto_cargado_date_source = 'ACCOUNT_CREATED' THEN NULL
