@@ -27,13 +27,8 @@ const baseObjectives = [
   'Interaccion'
 ];
 const googleObjectiveSuffixes = ['PMAX', 'Search'];
+const metaObjectives = ['Reproduccion de video'];
 const platformOptions = ['META', 'Google', 'MELI', 'TikTok'];
-const allObjectiveOptions = uniqueValues([
-  ...baseObjectives,
-  ...['Trafico', 'Leads', 'Ventas'].flatMap((objective) => (
-    googleObjectiveSuffixes.map((suffix) => `${objective}-${suffix}`)
-  ))
-]);
 const GENERAL_VIEW = 'general';
 const inactiveClientNames = [
   'ORMIFLEX',
@@ -41,7 +36,7 @@ const inactiveClientNames = [
 ];
 const viewAsClients: Record<string, string[]> = {
   'florencia@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA', 'PAMPA BAY', 'IMQ'],
-  'francisco@redhookdata.com': ['WORLD SPORT', 'BINDER RULEMANES', 'RP', 'RHD'],
+  'francisco@redhookdata.com': ['WORLD SPORT', 'BINDER RULEMANES', 'RP', 'RHD', 'CABRALES'],
   'franco@redhookdata.com': ['PAMPA BAY', 'IMQ', 'BINDER RULEMANES', 'RP'],
   'sabrina@redhookdata.com': ['FRESH UP', 'LONDON', 'ZONA FRANCA', 'WORLD SPORT']
 };
@@ -460,7 +455,9 @@ function getManualLogActionLabel(action: ManualInvestmentLogAction) {
 }
 
 function getObjectiveOptions(platform: string) {
-  if (normalizePlatformName(platform) !== 'google') return baseObjectives;
+  const normalizedPlatform = normalizePlatformName(platform);
+  if (normalizedPlatform === 'meta') return [...baseObjectives, ...metaObjectives];
+  if (normalizedPlatform !== 'google') return baseObjectives;
 
   const googleObjectiveBases = ['Trafico', 'Leads', 'Ventas'];
   const googleObjectives = googleObjectiveBases.flatMap((objective) => (
@@ -2179,12 +2176,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                                 openSelectId={openSelectId}
                                 onOpenSelect={setOpenSelectId}
                                 onChange={(value) => {
+                                  const objectiveOptions = getObjectiveOptions(value);
                                   setLineDraft({
                                     ...lineDraft,
                                     plataforma: value,
-                                    objetivo: allObjectiveOptions.includes(lineDraft.objetivo)
+                                    objetivo: objectiveOptions.includes(lineDraft.objetivo)
                                       ? lineDraft.objetivo
-                                      : allObjectiveOptions[0] ?? ''
+                                      : objectiveOptions[0] ?? ''
                                   });
                                 }}
                               />
@@ -2194,7 +2192,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                             {editingLineId === line.id && lineDraft ? (
                               <CellSelect
                                 value={lineDraft.objetivo}
-                                options={allObjectiveOptions}
+                                options={getObjectiveOptions(lineDraft.plataforma)}
                                 id={`edit-objetivo-${line.id}`}
                                 openSelectId={openSelectId}
                                 onOpenSelect={setOpenSelectId}
