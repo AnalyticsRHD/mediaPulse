@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Headers, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Headers, Logger, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { InvestmentsService } from './investments.service';
 import { ManualInvestmentDto } from './dto/manual-investment.dto';
 import { AuthService } from '../auth/auth.service';
@@ -7,6 +7,11 @@ import { CreditAllocationsRepository } from './credit-allocations.repository';
 
 @Controller('investments')
 export class InvestmentsController {
+  private readonly logger = new Logger(InvestmentsController.name);
+  private creditAllocationSyncPromise: Promise<void> | null = null;
+  private creditAllocationSyncStartedAt: string | null = null;
+  private creditAllocationSyncFinishedAt: string | null = null;
+
   constructor(
     private readonly investmentsService: InvestmentsService,
     private readonly authService: AuthService,
@@ -18,30 +23,65 @@ export class InvestmentsController {
   async getCreditAllocations(
     @Headers('authorization') authorization?: string,
     @Query('page') pageValue?: string,
-    @Query('limit') limitValue?: string
+    @Query('limit') limitValue?: string,
+    @Query('platform') platform = ''
   ) {
     await this.authService.requireAdmin(authorization);
     const page = Math.max(1, Number(pageValue) || 1);
     const limit = Math.min(100, Math.max(1, Number(limitValue) || 30));
-    const cachedPage = await this.creditAllocationsRepository.findPage(page, limit);
+    const cachedPage = await this.creditAllocationsRepository.findPage(page, limit, platform);
     if (cachedPage.total > 0) return cachedPage;
-    const fetched = await this.externalApisService.fetchCreditAllocations();
-    await this.creditAllocationsRepository.upsertAll(fetched);
-    return this.creditAllocationsRepository.findPage(page, limit);
+    this.startCreditAllocationSync();
+    return { ...cachedPage, syncing: true };
+  }
+
+  @Get('management/credit-allocations/sync-status')
+  async getCreditAllocationSyncStatus(@Headers('authorization') authorization?: string) {
+    await this.authService.requireAdmin(authorization);
+    return {
+      running: Boolean(this.creditAllocationSyncPromise),
+      startedAt: this.creditAllocationSyncStartedAt,
+      finishedAt: this.creditAllocationSyncFinishedAt
+    };
   }
 
   @Post('management/credit-allocations/sync')
   async syncCreditAllocations(
     @Headers('authorization') authorization?: string,
     @Query('page') pageValue?: string,
-    @Query('limit') limitValue?: string
+    @Query('limit') limitValue?: string,
+    @Query('platform') platform = ''
   ) {
     await this.authService.requireAdmin(authorization);
-    const fetched = await this.externalApisService.fetchCreditAllocations();
-    await this.creditAllocationsRepository.upsertAll(fetched);
+    this.startCreditAllocationSync();
     const page = Math.max(1, Number(pageValue) || 1);
     const limit = Math.min(100, Math.max(1, Number(limitValue) || 30));
-    return this.creditAllocationsRepository.findPage(page, limit);
+    const cachedPage = await this.creditAllocationsRepository.findPage(page, limit, platform);
+    return { ...cachedPage, syncing: true };
+  }
+
+  private startCreditAllocationSync(): void {
+    if (this.creditAllocationSyncPromise) return;
+    this.creditAllocationSyncStartedAt = new Date().toISOString();
+    this.creditAllocationSyncFinishedAt = null;
+    const platforms = ['meta', 'google', 'tiktok'] as const;
+
+    this.creditAllocationSyncPromise = Promise.allSettled(platforms.map(async (platform) => {
+      this.logger.log(`Credit Alloc ${platform} sync started`);
+      const rows = await this.externalApisService.fetchCreditAllocationsForPlatform(platform);
+      if (rows.length > 0) await this.creditAllocationsRepository.upsertAll(rows);
+      this.logger.log(`Credit Alloc ${platform} sync finished: ${rows.length} rows`);
+    })).then((results) => {
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          const error = result.reason instanceof Error ? result.reason.message : String(result.reason);
+          this.logger.error(`Credit Alloc ${platforms[index]} sync failed: ${error}`);
+        }
+      });
+    }).finally(() => {
+      this.creditAllocationSyncFinishedAt = new Date().toISOString();
+      this.creditAllocationSyncPromise = null;
+    });
   }
 
   @Patch('management/credit-allocations/:platform/:accountId/date')

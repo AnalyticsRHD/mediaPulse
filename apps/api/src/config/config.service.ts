@@ -56,7 +56,7 @@ export class ConfigService {
   }
 
   get googleAdsApiBaseUrl(): string {
-    return process.env.GOOGLE_ADS_API_BASE_URL || 'https://googleads.googleapis.com/v21';
+    return process.env.GOOGLE_ADS_API_BASE_URL || 'https://googleads.googleapis.com/v25';
   }
 
   get googleAdsDeveloperToken(): string {
@@ -164,6 +164,32 @@ export class ConfigService {
 
   get tiktokAccessToken(): string {
     return this.cleanPlaceholder(process.env.TIKTOK_ACCESS_TOKEN || '');
+  }
+
+  get tiktokCreditAllocAppId(): string {
+    return this.cleanPlaceholder(process.env.TIKTOK_APP_ID_ALLOC || '');
+  }
+
+  get tiktokCreditAllocAppSecret(): string {
+    return this.cleanPlaceholder(process.env.TIKTOK_APP_SECRET_ALLOC || '');
+  }
+
+  get tiktokCreditAllocAccessToken(): string {
+    return this.cleanPlaceholder(process.env.TIKTOK_ACCESS_TOKEN_ALLOC || '');
+  }
+
+  get tiktokCreditAllocAdvertiserIds(): string[] {
+    return (process.env.TIKTOK_ADVERTISER_IDS_ALLOC || '')
+      .split(',')
+      .map((value) => this.cleanPlaceholder(value))
+      .filter(Boolean);
+  }
+
+  get tiktokCreditAllocBusinessCenterIds(): string[] {
+    return (process.env.TIKTOK_BUSINESS_CENTER_IDS_ALLOC || '')
+      .split(',')
+      .map((value) => this.cleanPlaceholder(value))
+      .filter(Boolean);
   }
 
   get tiktokAdvertiserIds(): string[] {

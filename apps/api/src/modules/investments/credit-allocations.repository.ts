@@ -39,21 +39,27 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
     }));
   }
 
-  async findPage(page: number, limit: number) {
+  async findPage(page: number, limit: number, platform = '') {
     await this.init();
     if (!this.pool) return { items: [], total: 0, page, limit, hasMore: false };
 
     const offset = (page - 1) * limit;
-    const [result, countResult] = await Promise.all([
+    const [result, countResult, platformsResult] = await Promise.all([
       this.pool.query(`
         SELECT plataforma, account_id, account_name, currency, credito_disponible,
           monto_cargado, monto_cargado_updated_at, monto_cargado_date_source, consumo_ayer, consumo_mes,
           consumo_promedio_8_dias, dias_cobertura_credito
         FROM credit_allocations
+        WHERE ($3 = '' OR lower(plataforma) = lower($3))
         ORDER BY consumo_ayer DESC, account_name ASC, plataforma ASC, account_id ASC
         LIMIT $1 OFFSET $2;
-      `, [limit, offset]),
-      this.pool.query('SELECT COUNT(*)::int AS total FROM credit_allocations;')
+      `, [limit, offset, platform]),
+      this.pool.query(`
+        SELECT COUNT(*)::int AS total
+        FROM credit_allocations
+        WHERE ($1 = '' OR lower(plataforma) = lower($1));
+      `, [platform]),
+      this.pool.query('SELECT DISTINCT plataforma FROM credit_allocations ORDER BY plataforma;')
     ]);
     const total = Number(countResult.rows[0]?.total || 0);
     const items = result.rows.map((row) => ({
@@ -71,7 +77,8 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
       diasCoberturaCredito: row.dias_cobertura_credito == null ? null : Number(row.dias_cobertura_credito)
     }));
 
-    return { items, total, page, limit, hasMore: offset + items.length < total };
+    const platforms = platformsResult.rows.map((row) => String(row.plataforma));
+    return { items, total, page, limit, hasMore: offset + items.length < total, platforms };
   }
 
   async updateManualDate(plataforma: string, accountId: string, date: string) {

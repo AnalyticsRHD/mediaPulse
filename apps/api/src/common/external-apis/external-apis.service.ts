@@ -415,13 +415,21 @@ export class ExternalApisService {
   }
 
   async fetchCreditAllocations(): Promise<MetaCreditAllocation[]> {
-    const results = await Promise.allSettled([
-      this.fetchMetaCreditAllocations(),
-      this.fetchGoogleCreditAllocations(),
-      this.fetchTikTokCreditAllocations()
-    ]);
+    const results = await Promise.allSettled(
+      (['meta', 'google', 'tiktok'] as const).map((platform) => (
+        this.fetchCreditAllocationsForPlatform(platform)
+      ))
+    );
 
     return results.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
+  }
+
+  async fetchCreditAllocationsForPlatform(
+    platform: 'meta' | 'google' | 'tiktok'
+  ): Promise<MetaCreditAllocation[]> {
+    if (platform === 'meta') return this.fetchMetaCreditAllocations();
+    if (platform === 'google') return this.fetchGoogleCreditAllocations();
+    return this.fetchTikTokCreditAllocations();
   }
 
   private async fetchGoogleCreditAllocations(): Promise<MetaCreditAllocation[]> {
@@ -565,19 +573,25 @@ export class ExternalApisService {
   }
 
   private async fetchTikTokCreditAllocations(): Promise<MetaCreditAllocation[]> {
-    const accessToken = this.configService.tiktokAccessToken;
+    const accessToken = this.configService.tiktokCreditAllocAccessToken;
     if (!accessToken) return [];
-    const names = await this.fetchTikTokAdvertiserNames(accessToken, true);
-    const matchingIds = Array.from(names.entries())
-      .filter(([, name]) => /linea/i.test(name))
-      .map(([advertiserId]) => advertiserId);
-    if (matchingIds.length === 0) return [];
+    const names = await this.fetchTikTokAdvertiserNames(
+      accessToken,
+      true,
+      this.configService.tiktokCreditAllocAppId,
+      this.configService.tiktokCreditAllocAppSecret
+    );
+    const candidateIds = new Set([
+      ...names.keys(),
+      ...this.configService.tiktokCreditAllocAdvertiserIds
+    ]);
+    if (candidateIds.size === 0) return [];
 
     try {
       const infoResponse = await axios.get(`${this.configService.tiktokApiBaseUrl}/advertiser/info/`, {
         headers: { 'Access-Token': accessToken },
         params: {
-          advertiser_ids: JSON.stringify(matchingIds),
+          advertiser_ids: JSON.stringify([...candidateIds]),
           fields: JSON.stringify(['advertiser_id', 'name', 'currency', 'create_time'])
         },
         timeout: 0
@@ -588,6 +602,10 @@ export class ExternalApisService {
       }
       const infoList = infoResponse.data?.data?.list || [];
       const infoById = new Map<string, any>(infoList.map((item: any) => [String(item.advertiser_id), item]));
+      const matchingIds = [...candidateIds].filter((advertiserId) => (
+        /linea/i.test(String(infoById.get(advertiserId)?.name || names.get(advertiserId) || ''))
+      ));
+      if (matchingIds.length === 0) return [];
       const balances = await this.fetchTikTokAdvertiserBalances(accessToken, new Set(matchingIds));
       const today = this.today();
       const yesterday = this.previousDate(today);
@@ -606,15 +624,28 @@ export class ExternalApisService {
         const consumoPromedio8Dias = recent.length
           ? this.round2(recent.reduce((sum, row) => sum + row.spend, 0) / recent.length)
           : 0;
-        const creditoDisponible = this.numberValue(
-          balance.balance ?? balance.available_balance ?? balance.availableBalance ?? balance.cash_balance
-        );
         const montoCargado = this.numberValue(
           balance.budget ?? balance.total_budget ?? balance.totalBudget ?? balance.account_budget
         );
+        const budgetCost = this.numberValue(balance.budget_cost ?? balance.budgetCost);
+        const creditoDisponible = montoCargado > 0
+          ? Math.max(montoCargado - budgetCost, 0)
+          : this.numberValue(
+            balance.account_balance
+            ?? balance.balance
+            ?? balance.available_balance
+            ?? balance.availableBalance
+            ?? balance.cash_balance
+          );
         const info = infoById.get(advertiserId) || {};
         const fecha = String(
-          balance.update_time ?? balance.updated_at ?? balance.create_time ?? info.create_time ?? ''
+          balance.latest_recharge_time
+          || balance.first_recharge_time
+          || balance.update_time
+          || balance.updated_at
+          || balance.create_time
+          || info.create_time
+          || ''
         ).slice(0, 10);
 
         out.push({
@@ -648,20 +679,26 @@ export class ExternalApisService {
     advertiserIds: Set<string>
   ): Promise<Map<string, any>> {
     const balances = new Map<string, any>();
-    const businessCenterIds = new Set(this.configService.tiktokBusinessCenterIds);
+    const businessCenterIds = new Set(this.configService.tiktokCreditAllocBusinessCenterIds);
     try {
-      const bcResponse = await axios.get(`${this.configService.tiktokApiBaseUrl}/bc/get/`, {
-        headers: { 'Access-Token': accessToken },
-        params: { page: 1, page_size: 1000 },
-        timeout: 0
-      });
-      if (bcResponse.data?.code !== 0) {
-        throw new Error(bcResponse.data?.message || `TikTok Business Center code ${bcResponse.data?.code}`);
-      }
-      for (const item of bcResponse.data?.data?.list || []) {
-        const id = String(item.bc_id || item.business_center_id || '');
-        if (id) businessCenterIds.add(id);
-      }
+      let page = 1;
+      let totalPages = 1;
+      do {
+        const bcResponse = await axios.get(`${this.configService.tiktokApiBaseUrl}/bc/get/`, {
+          headers: { 'Access-Token': accessToken },
+          params: { page, page_size: 50 },
+          timeout: 0
+        });
+        if (bcResponse.data?.code !== 0) {
+          throw new Error(bcResponse.data?.message || `TikTok Business Center code ${bcResponse.data?.code}`);
+        }
+        for (const item of bcResponse.data?.data?.list || []) {
+          const id = String(item.bc_id || item.business_center_id || '');
+          if (id) businessCenterIds.add(id);
+        }
+        totalPages = Number(bcResponse.data?.data?.page_info?.total_page || 1) || 1;
+        page += 1;
+      } while (page <= totalPages);
     } catch (error) {
       this.logger.warn(`TikTok Business Center discovery failed: ${this.axiosDetail(error)}`);
     }
@@ -672,13 +709,16 @@ export class ExternalApisService {
       do {
         const response = await axios.get(`${this.configService.tiktokApiBaseUrl}/advertiser/balance/get/`, {
           headers: { 'Access-Token': accessToken },
-          params: { bc_id: bcId, page, page_size: 1000 },
+          params: { bc_id: bcId, page, page_size: 50 },
           timeout: 0
         });
         if (response.data?.code !== 0) {
           throw new Error(response.data?.message || `TikTok balance code ${response.data?.code}`);
         }
-        for (const item of response.data?.data?.list || []) {
+        const balanceRows = response.data?.data?.advertiser_account_list
+          || response.data?.data?.list
+          || [];
+        for (const item of balanceRows) {
           const id = String(item.advertiser_id || '');
           if (id && advertiserIds.has(id)) balances.set(id, item);
         }
@@ -2897,9 +2937,12 @@ export class ExternalApisService {
     return Math.round(value * 100) / 100;
   }
 
-  private async fetchTikTokAdvertiserNames(accessToken: string, noTimeout = false): Promise<Map<string, string>> {
-    const appId = this.configService.tiktokAppId;
-    const secret = this.configService.tiktokAppSecret;
+  private async fetchTikTokAdvertiserNames(
+    accessToken: string,
+    noTimeout = false,
+    appId = this.configService.tiktokAppId,
+    secret = this.configService.tiktokAppSecret
+  ): Promise<Map<string, string>> {
     const names = new Map<string, string>();
 
     if (!appId || !secret) return names;

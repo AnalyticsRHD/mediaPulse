@@ -183,6 +183,14 @@ type CreditAllocationPage = {
   page: number;
   limit: number;
   hasMore: boolean;
+  platforms?: string[];
+  syncing?: boolean;
+};
+
+type CreditAllocationSyncStatus = {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
 };
 
 function getCreditAvailabilityClass(days: number | null | undefined) {
@@ -725,8 +733,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const [manualHistory, setManualHistory] = useState<ManualHistoryLine[]>([]);
   const [creditAllocations, setCreditAllocations] = useState<CreditAllocationLine[]>([]);
   const [creditAllocationsLoading, setCreditAllocationsLoading] = useState(false);
+  const [creditAllocationSyncRunning, setCreditAllocationSyncRunning] = useState(false);
   const [creditAllocationsPage, setCreditAllocationsPage] = useState(1);
   const [creditAllocationsHasMore, setCreditAllocationsHasMore] = useState(false);
+  const [creditAllocationPlatforms, setCreditAllocationPlatforms] = useState<string[]>([]);
   const [managementPlatformFilter, setManagementPlatformFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(defaultForm);
@@ -823,8 +833,11 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
     });
   }, [scopedControlData, controlFilters, controlSort]);
   const managementPlatformOptions = useMemo(
-    () => uniqueValues(creditAllocations.map((line) => line.plataforma)).sort(),
-    [creditAllocations]
+    () => uniqueValues([
+      ...creditAllocationPlatforms,
+      ...creditAllocations.map((line) => line.plataforma)
+    ]).sort(),
+    [creditAllocationPlatforms, creditAllocations]
   );
   const filteredCreditAllocations = useMemo(() => {
     const normalizedSearch = managementAccountSearch.trim().toLowerCase();
@@ -988,13 +1001,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
     }
   }
 
-  async function loadCreditAllocations(sync = false, page = 1, append = false) {
+  async function loadCreditAllocations(sync = false, page = 1, append = false, platform = managementPlatformFilter) {
     if (creditAllocationsLoading) return;
     setCreditAllocationsLoading(true);
     setErrorMessage('');
     try {
       const payload = await requestJson<CreditAllocationPage>(
-        `${API_BASE}/investments/management/credit-allocations${sync ? '/sync' : ''}?page=${page}&limit=30`,
+        `${API_BASE}/investments/management/credit-allocations${sync ? '/sync' : ''}?page=${page}&limit=30&platform=${encodeURIComponent(platform)}`,
         { cache: 'no-store', method: sync ? 'POST' : 'GET' }
       );
       setCreditAllocations((current) => append
@@ -1004,6 +1017,8 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
         : payload.items);
       setCreditAllocationsPage(payload.page);
       setCreditAllocationsHasMore(payload.hasMore);
+      if (payload.platforms) setCreditAllocationPlatforms(payload.platforms);
+      if (payload.syncing) setCreditAllocationSyncRunning(true);
     } catch (error) {
       if (!append) {
         setCreditAllocations([]);
@@ -1014,6 +1029,25 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
       setCreditAllocationsLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!creditAllocationSyncRunning || activeTab !== 'management') return;
+    const interval = window.setInterval(async () => {
+      try {
+        const status = await requestJson<CreditAllocationSyncStatus>(
+          `${API_BASE}/investments/management/credit-allocations/sync-status`,
+          { cache: 'no-store' }
+        );
+        if (!status.running) {
+          setCreditAllocationSyncRunning(false);
+          await loadCreditAllocations(false, 1, false);
+        }
+      } catch {
+        // La sincronizacion continua en el backend aunque falle un intento de polling.
+      }
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [creditAllocationSyncRunning, activeTab, authToken]);
 
   async function saveCreditAllocationDate(line: CreditAllocationLine) {
     if (!creditDateDraft) return;
@@ -1661,12 +1695,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                 setManagementAccountSearch('');
                 setManagementSort(null);
                 setOpenControlFilter(null);
+                void loadCreditAllocations(false, 1, false, '');
               }}
             >
               Limpiar filtros
             </button>
-            <button className="secondary-button" type="button" onClick={() => loadCreditAllocations(true, 1, false)} disabled={creditAllocationsLoading}>
-              {creditAllocationsLoading ? 'Actualizando...' : 'Actualizar'}
+            <button className="secondary-button" type="button" onClick={() => loadCreditAllocations(true, 1, false)} disabled={creditAllocationsLoading || creditAllocationSyncRunning}>
+              {creditAllocationsLoading || creditAllocationSyncRunning ? 'Actualizando...' : 'Actualizar'}
             </button>
           </div>
           <div className="table-wrap">
@@ -1681,7 +1716,10 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                     formatOptionLabel={formatPlatformLabel}
                     openFilter={openControlFilter}
                     onToggle={setOpenControlFilter}
-                    onChange={setManagementPlatformFilter}
+                    onChange={(value) => {
+                      setManagementPlatformFilter(value);
+                      void loadCreditAllocations(false, 1, false, value);
+                    }}
                   />
                   <th>
                     <input
@@ -1748,12 +1786,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                     <td>{formatCreditMoney(line.consumoMes, line.currency)}</td>
                   </tr>
                 ))}
-                {!creditAllocationsLoading && filteredCreditAllocations.length === 0 ? (
+                {!creditAllocationsLoading && !creditAllocationSyncRunning && filteredCreditAllocations.length === 0 ? (
                   <tr>
                     <td className="empty" colSpan={7}>{creditAllocations.length === 0 ? 'No se encontraron cuentas con LINEA o Credit Alloc en el nombre.' : 'No hay cuentas para la plataforma seleccionada.'}</td>
                   </tr>
                 ) : null}
-                {creditAllocationsLoading && creditAllocations.length === 0 ? (
+                {(creditAllocationsLoading || creditAllocationSyncRunning) && creditAllocations.length === 0 ? (
                   <tr>
                     <td className="empty" colSpan={7}>Consultando cuentas de las plataformas...</td>
                   </tr>
@@ -1762,7 +1800,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
             </table>
           </div>
           <div ref={creditAllocationsEndRef} className="infinite-scroll-sentinel" aria-hidden="true" />
-          {creditAllocationsLoading && creditAllocations.length > 0 ? (
+          {(creditAllocationsLoading || creditAllocationSyncRunning) && creditAllocations.length > 0 ? (
             <p className="infinite-scroll-status">Cargando más cuentas...</p>
           ) : null}
         </section>
