@@ -101,6 +101,17 @@ export class CreditAllocationsRepository implements OnApplicationShutdown {
     };
   }
 
+  async getLastSyncedAt(): Promise<string | null> {
+    await this.init();
+    if (!this.pool) return null;
+    const result = await this.pool.query(`
+      SELECT MAX(last_synced_at) AS last_synced_at
+      FROM credit_allocations;
+    `);
+    const value = result.rows[0]?.last_synced_at;
+    return value ? new Date(value).toISOString() : null;
+  }
+
   async upsertAll(lines: MetaCreditAllocation[]): Promise<MetaCreditAllocation[]> {
     await this.init();
     if (!this.pool) throw new ServiceUnavailableException('La base de datos no esta configurada');

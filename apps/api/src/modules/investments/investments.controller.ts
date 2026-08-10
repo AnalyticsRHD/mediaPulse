@@ -38,10 +38,11 @@ export class InvestmentsController {
   @Get('management/credit-allocations/sync-status')
   async getCreditAllocationSyncStatus(@Headers('authorization') authorization?: string) {
     await this.authService.requireAdmin(authorization);
+    const persistedFinishedAt = await this.creditAllocationsRepository.getLastSyncedAt();
     return {
       running: Boolean(this.creditAllocationSyncPromise),
       startedAt: this.creditAllocationSyncStartedAt,
-      finishedAt: this.creditAllocationSyncFinishedAt
+      finishedAt: this.creditAllocationSyncFinishedAt || persistedFinishedAt
     };
   }
 

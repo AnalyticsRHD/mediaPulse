@@ -843,7 +843,8 @@ export class InvestmentsService {
     if (line.costoPorResultado <= 0) return 0;
 
     const base = line.presupuesto / line.costoPorResultado;
-    return this.normalizeReference(line.objetivo) === 'alcance' ? base * 1000 : base;
+    const objective = this.normalizeReference(line.objetivo);
+    return objective === 'alcance' || objective === 'youtube' ? base * 1000 : base;
   }
 
   private isSalesObjective(objective: string): boolean {

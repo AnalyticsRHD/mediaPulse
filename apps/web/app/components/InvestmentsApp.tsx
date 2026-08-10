@@ -734,6 +734,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const [creditAllocations, setCreditAllocations] = useState<CreditAllocationLine[]>([]);
   const [creditAllocationsLoading, setCreditAllocationsLoading] = useState(false);
   const [creditAllocationSyncRunning, setCreditAllocationSyncRunning] = useState(false);
+  const [lastCreditAllocationSyncAt, setLastCreditAllocationSyncAt] = useState('');
   const [creditAllocationsPage, setCreditAllocationsPage] = useState(1);
   const [creditAllocationsHasMore, setCreditAllocationsHasMore] = useState(false);
   const [creditAllocationPlatforms, setCreditAllocationPlatforms] = useState<string[]>([]);
@@ -1038,6 +1039,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
           `${API_BASE}/investments/management/credit-allocations/sync-status`,
           { cache: 'no-store' }
         );
+        setLastCreditAllocationSyncAt(status.finishedAt || status.startedAt || '');
         if (!status.running) {
           setCreditAllocationSyncRunning(false);
           await loadCreditAllocations(false, 1, false);
@@ -1048,6 +1050,17 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
     }, 3000);
     return () => window.clearInterval(interval);
   }, [creditAllocationSyncRunning, activeTab, authToken]);
+
+  useEffect(() => {
+    if (activeTab !== 'management' || !authToken) return;
+    requestJson<CreditAllocationSyncStatus>(
+      `${API_BASE}/investments/management/credit-allocations/sync-status`,
+      { cache: 'no-store' }
+    ).then((status) => {
+      setCreditAllocationSyncRunning(status.running);
+      setLastCreditAllocationSyncAt(status.finishedAt || status.startedAt || '');
+    }).catch(() => undefined);
+  }, [activeTab, authToken]);
 
   async function saveCreditAllocationDate(line: CreditAllocationLine) {
     if (!creditDateDraft) return;
@@ -1687,22 +1700,25 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
       {activeTab === 'management' ? (
         <section className="management-workspace" aria-label="Gestión de Credit Alloc">
           <div className="management-toolbar">
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => {
-                setManagementPlatformFilter('');
-                setManagementAccountSearch('');
-                setManagementSort(null);
-                setOpenControlFilter(null);
-                void loadCreditAllocations(false, 1, false, '');
-              }}
-            >
-              Limpiar filtros
-            </button>
-            <button className="secondary-button" type="button" onClick={() => loadCreditAllocations(true, 1, false)} disabled={creditAllocationsLoading || creditAllocationSyncRunning}>
-              {creditAllocationsLoading || creditAllocationSyncRunning ? 'Actualizando...' : 'Actualizar'}
-            </button>
+            <div className="management-toolbar-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  setManagementPlatformFilter('');
+                  setManagementAccountSearch('');
+                  setManagementSort(null);
+                  setOpenControlFilter(null);
+                  void loadCreditAllocations(false, 1, false, '');
+                }}
+              >
+                Limpiar filtros
+              </button>
+              <button className="secondary-button" type="button" onClick={() => loadCreditAllocations(true, 1, false)} disabled={creditAllocationsLoading || creditAllocationSyncRunning}>
+                {creditAllocationsLoading || creditAllocationSyncRunning ? 'Actualizando...' : 'Actualizar'}
+              </button>
+            </div>
+            <p className="last-sync">Ultima actualizacion: {formatLastUpdate(lastCreditAllocationSyncAt)}</p>
           </div>
           <div className="table-wrap">
             <table className="management-table">
