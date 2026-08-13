@@ -1120,9 +1120,22 @@ export class ExternalApisService {
     const endDate = date;
     const rows: any[] = [];
 
-    for (const customerId of customerIds) {
-      const customerRows = await this.searchGoogleAdsCustomer(customerId, this.googleAdsQuery(startDate, endDate), accessToken);
-      rows.push(...customerRows.map((row) => ({ ...row, __customerId: customerId })));
+    // A Google manager can contain dozens of customer accounts. Querying them
+    // sequentially made the sync exceed the MetricsService timeout, so the UI
+    // reported an update while no Google rows were persisted. Keep concurrency
+    // bounded to avoid flooding the API while completing comfortably in time.
+    const query = this.googleAdsQuery(startDate, endDate);
+    for (const customerIdChunk of this.chunkArray(customerIds, 6)) {
+      const customerResults = await Promise.all(
+        customerIdChunk.map(async (customerId) => ({
+          customerId,
+          rows: await this.searchGoogleAdsCustomer(customerId, query, accessToken)
+        }))
+      );
+
+      for (const result of customerResults) {
+        rows.push(...result.rows.map((row) => ({ ...row, __customerId: result.customerId })));
+      }
     }
 
     const aggregated = new Map<string, {
