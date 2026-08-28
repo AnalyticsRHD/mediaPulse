@@ -44,10 +44,54 @@ select {
   padding: 24px;
 }
 
-.auth-loading {
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 800;
+.brand-loader-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  cursor: wait;
+}
+
+.brand-loader-logo {
+  width: clamp(180px, 24vw, 300px);
+  height: auto;
+  animation: rhd-loader-pulse 1.15s ease-in-out infinite;
+  filter: drop-shadow(0 14px 25px rgba(24, 68, 71, 0.12));
+  will-change: opacity, transform, filter;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@keyframes rhd-loader-pulse {
+  0%,
+  100% {
+    opacity: 0.22;
+    transform: scale(0.96);
+    filter: drop-shadow(0 8px 18px rgba(24, 68, 71, 0.06));
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+    filter: drop-shadow(0 16px 30px rgba(24, 68, 71, 0.2));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-loader-logo {
+    animation-duration: 2.4s;
+    transform: none;
+  }
 }
 
 .login-card {
@@ -1785,6 +1829,23 @@ tbody tr:nth-child(even) {
   width: min(140px, 100%);
 }
 
+.forecast-export-button {
+  min-height: 36px;
+  border: 1px solid #174c4c;
+  border-radius: 7px;
+  background: #fff;
+  color: #174c4c;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.forecast-export-button:hover {
+  background: #eef6f6;
+}
+
 .manual-empty {
   border: 1px dashed var(--line);
   border-radius: 8px;
@@ -2166,6 +2227,150 @@ tfoot td {
 .modal-button:disabled {
   cursor: wait;
   opacity: 0.7;
+}
+
+.forecast-export-modal {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 40px);
+  display: grid;
+  gap: 18px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 22px;
+}
+
+.forecast-export-modal-header,
+.forecast-export-modal-actions,
+.forecast-export-column-actions {
+  display: flex;
+  align-items: center;
+}
+
+.forecast-export-modal-header {
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.forecast-export-modal-header h2,
+.forecast-export-modal-header p,
+.forecast-export-warning {
+  margin: 0;
+}
+
+.forecast-export-modal-header p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.modal-close-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: #174c4c;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.forecast-export-columns {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.forecast-export-columns legend,
+.forecast-export-observations > span {
+  color: #173f3f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.forecast-export-column-actions {
+  gap: 8px;
+}
+
+.forecast-export-column-actions button {
+  border: 0;
+  background: transparent;
+  color: #176767;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 0;
+}
+
+.forecast-export-column-actions button + button::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--muted);
+}
+
+.forecast-export-column-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px 12px;
+}
+
+.forecast-export-column-grid label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.forecast-export-column-grid input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #174c4c;
+}
+
+.forecast-export-observations {
+  display: grid;
+  gap: 8px;
+}
+
+.forecast-export-observations textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 11px 12px;
+}
+
+.forecast-export-observations textarea:focus {
+  border-color: #176767;
+  outline: 2px solid rgba(23, 103, 103, 0.12);
+}
+
+.forecast-export-warning {
+  color: #a32626;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.forecast-export-modal-actions {
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 680px) {
+  .forecast-export-column-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .previous-values-modal,

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import logo from '../../assets/logo.png';
+import { BrandLoader } from '../components/BrandLoader';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
 
@@ -64,6 +65,7 @@ export default function LoginPage() {
 
   return (
     <main className="login-page">
+      {loading ? <BrandLoader label="Iniciando sesión" /> : null}
       <section className="login-hero">
       </section>
       <section className="login-panel">

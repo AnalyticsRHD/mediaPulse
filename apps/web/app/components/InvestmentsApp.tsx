@@ -3,6 +3,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
+import { BrandLoader } from './BrandLoader';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
 const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
@@ -186,6 +187,38 @@ type CreditAllocationPage = {
   platforms?: string[];
   syncing?: boolean;
 };
+
+type ForecastExportColumnKey =
+  | 'marca'
+  | 'plataforma'
+  | 'objetivo'
+  | 'campana'
+  | 'moneda'
+  | 'presupuesto'
+  | 'share'
+  | 'costoPorResultado'
+  | 'resultadosProyectados'
+  | 'tktPromedio'
+  | 'fcProyectada';
+
+type ForecastExportGroup = {
+  client: string;
+  lines: InvestmentLine[];
+};
+
+const forecastExportColumns: Array<{ key: ForecastExportColumnKey; label: string }> = [
+  { key: 'marca', label: 'Marca' },
+  { key: 'plataforma', label: 'Plataforma' },
+  { key: 'objetivo', label: 'Objetivo' },
+  { key: 'campana', label: 'Campaña' },
+  { key: 'moneda', label: 'Moneda' },
+  { key: 'presupuesto', label: 'Presupuesto' },
+  { key: 'share', label: 'Share' },
+  { key: 'costoPorResultado', label: 'Costo x resultado' },
+  { key: 'resultadosProyectados', label: 'Resultado proyectado' },
+  { key: 'tktPromedio', label: 'TKT prom' },
+  { key: 'fcProyectada', label: 'FC proyectada' }
+];
 
 type CreditAllocationSyncStatus = {
   running: boolean;
@@ -777,6 +810,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const [openSelectId, setOpenSelectId] = useState<string | null>(null);
   const [previewClientFilter, setPreviewClientFilter] = useState('');
   const [previewBrandFilter, setPreviewBrandFilter] = useState('');
+  const [forecastExportGroup, setForecastExportGroup] = useState<ForecastExportGroup | null>(null);
+  const [forecastExportColumnsSelected, setForecastExportColumnsSelected] = useState<ForecastExportColumnKey[]>(
+    forecastExportColumns.map((column) => column.key)
+  );
+  const [forecastExportObservations, setForecastExportObservations] = useState('');
+  const [forecastExporting, setForecastExporting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const canManageManualLines = authUser?.role === 'ADMIN' || authUser?.role === 'MEDIA';
   const isManagementView = activeTab === 'management';
@@ -904,6 +943,16 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const manualPreviewMonthFinished = isFinishedMonth(previewMonth);
   const canEditManualPreview = canManageManualLines && !manualPreviewMonthFinished;
   const syncRunning = syncing || consumptionSyncStatus?.status === 'running';
+  const showLoadingOverlay = loading
+    || syncRunning
+    || creditAllocationsLoading
+    || creditAllocationSyncRunning
+    || saving
+    || historyLoading
+    || deviationSaving
+    || deleting
+    || forecastExporting
+    || creditDateSaving;
   const showYesterdayConsumption = shouldShowYesterdayConsumption(datePreset);
   const controlSortEntries = useMemo(
     () => Object.entries(sortLabels).filter(([key]) => showYesterdayConsumption || key !== 'consumoAyer'),
@@ -1620,10 +1669,368 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
     }
   }
 
+  function toggleForecastExportColumn(key: ForecastExportColumnKey) {
+    setForecastExportColumnsSelected((current) => (
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+    ));
+  }
+
+  async function generateForecastPdf() {
+    if (!forecastExportGroup || forecastExportColumnsSelected.length === 0) return;
+
+    const previewWindow = window.open('', '_blank');
+    if (previewWindow) {
+      previewWindow.document.title = 'Generando PDF...';
+      const previewStyle = previewWindow.document.createElement('style');
+      previewStyle.textContent = `
+        html, body { min-height: 100%; margin: 0; }
+        body { display: grid; place-items: center; background: #fff; }
+        img { width: min(280px, 55vw); height: auto; animation: rhd-loader-pulse 1.15s ease-in-out infinite; }
+        @keyframes rhd-loader-pulse {
+          0%, 100% { opacity: .22; transform: scale(.96); }
+          50% { opacity: 1; transform: scale(1.03); }
+        }
+      `;
+      const previewLogo = previewWindow.document.createElement('img');
+      previewLogo.src = `${window.location.origin}/assets/rhd-no-bg.png`;
+      previewLogo.alt = 'Generando PDF';
+      previewWindow.document.head.appendChild(previewStyle);
+      previewWindow.document.body.replaceChildren(previewLogo);
+    }
+
+    setForecastExporting(true);
+    setErrorMessage('');
+    try {
+      const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable')
+      ]);
+      const [logoResponse, interRegularResponse, interSemiBoldResponse] = await Promise.all([
+        fetch('/assets/rhd-no-bg.png'),
+        fetch('/assets/Inter-Regular.ttf'),
+        fetch('/assets/Inter-SemiBold.ttf')
+      ]);
+      if (!logoResponse.ok || !interRegularResponse.ok || !interSemiBoldResponse.ok) {
+        throw new Error('No se pudieron cargar los recursos para el PDF');
+      }
+      const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('No se pudo procesar un recurso para el PDF'));
+        reader.readAsDataURL(blob);
+      });
+      const [logoDataUrl, interRegularDataUrl, interSemiBoldDataUrl] = await Promise.all([
+        logoResponse.blob().then(blobToDataUrl),
+        interRegularResponse.blob().then(blobToDataUrl),
+        interSemiBoldResponse.blob().then(blobToDataUrl)
+      ]);
+
+      const selectedColumns = forecastExportColumns.filter((column) => (
+        forecastExportColumnsSelected.includes(column.key)
+      ));
+      const shares = getRoundedGroupShares(forecastExportGroup.lines);
+      const valueForColumn = (line: InvestmentLine, key: ForecastExportColumnKey) => {
+        const values: Record<ForecastExportColumnKey, string> = {
+          marca: line.marca ?? '-',
+          plataforma: line.plataforma,
+          objetivo: line.objetivo,
+          campana: line.campana || '-',
+          moneda: line.moneda,
+          presupuesto: formatMoney(line.presupuesto, line.moneda),
+          share: `${shares.get(line.id) ?? 0}%`,
+          costoPorResultado: formatMoney(line.costoPorResultado, line.moneda),
+          resultadosProyectados: integer.format(line.resultadosProyectados),
+          tktPromedio: formatMoney(line.tktPromedio, line.moneda),
+          fcProyectada: formatMoney(line.fcProyectada, line.moneda)
+        };
+        return values[key];
+      };
+
+      const lines = forecastExportGroup.lines;
+      const exportBrand = lines[0]?.marca || 'Sin marca';
+      const platforms = uniqueValues(lines.map((line) => line.plataforma));
+      const objectives = uniqueValues(lines.map((line) => line.objetivo));
+      const currenciesInPlan = uniqueValues(lines.map((line) => line.moneda)) as InvestmentCurrency[];
+      const totalProjectedResults = lines.reduce((sum, line) => sum + line.resultadosProyectados, 0);
+      const normalizedObjective = objectives.length === 1 ? normalizeTypeaheadText(objectives[0]) : '';
+      const projectedResultLabel = (() => {
+        if (!normalizedObjective) return 'Resultados proyectados';
+        if (normalizedObjective.includes('alcance')) return 'Alcance proyectado';
+        if (normalizedObjective.includes('lead')) return 'Leads proyectados';
+        if (normalizedObjective.includes('venta')) return 'Ventas proyectadas';
+        if (normalizedObjective.includes('visita') || normalizedObjective.includes('trafico')) return 'Visitas proyectadas';
+        if (normalizedObjective.includes('view') || normalizedObjective.includes('reproduccion')) return 'Reproducciones proyectadas';
+        if (normalizedObjective.includes('interaccion')) return 'Interacciones proyectadas';
+        return 'Resultado proyectado';
+      })();
+      const aggregateMoney = (valueForLine: (line: InvestmentLine) => number) => currenciesInPlan
+        .map((currency) => formatMoney(
+          lines.filter((line) => line.moneda === currency).reduce((sum, line) => sum + valueForLine(line), 0),
+          currency
+        ))
+        .join(' · ');
+      const totalBudgetLabel = aggregateMoney((line) => line.presupuesto);
+      const blendedCostLabel = currenciesInPlan
+        .map((currency) => {
+          const currencyLines = lines.filter((line) => line.moneda === currency);
+          const currencyBudget = currencyLines.reduce((sum, line) => sum + line.presupuesto, 0);
+          const currencyResults = currencyLines.reduce((sum, line) => sum + line.resultadosProyectados, 0);
+          const blendedCost = currencyResults > 0
+            ? currencyBudget / currencyResults
+            : currencyLines.reduce((sum, line) => sum + line.costoPorResultado, 0) / Math.max(currencyLines.length, 1);
+          return formatMoney(blendedCost, currency);
+        })
+        .join(' · ');
+      const generatedDateLabel = new Intl.DateTimeFormat('es-AR', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        timeZone: OPERATIONAL_TIME_ZONE
+      }).format(new Date()).replace(/\./g, '').toUpperCase();
+
+      const doc = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4',
+        compress: true,
+        putOnlyUsedFonts: true
+      });
+      doc.addFileToVFS('Inter-Regular.ttf', interRegularDataUrl.split(',')[1]);
+      doc.addFont('Inter-Regular.ttf', 'Inter', 'normal');
+      doc.addFileToVFS('Inter-SemiBold.ttf', interSemiBoldDataUrl.split(',')[1]);
+      doc.addFont('Inter-SemiBold.ttf', 'Inter', 'bold');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const ink: [number, number, number] = [26, 43, 45];
+      const green: [number, number, number] = [23, 79, 80];
+      const muted: [number, number, number] = [103, 116, 118];
+
+      const drawAccentRule = (y: number) => {
+        doc.setDrawColor(220, 227, 226);
+        doc.setLineWidth(0.35);
+        doc.line(14, y, pageWidth - 14, y);
+        const segmentWidth = 8;
+        ([[93, 94, 190], [222, 184, 45], [235, 101, 54]] as Array<[number, number, number]>).forEach((color, index) => {
+          doc.setDrawColor(...color);
+          doc.setLineWidth(1.1);
+          doc.line(14 + (index * segmentWidth), y, 14 + ((index + 1) * segmentWidth), y);
+        });
+      };
+      const drawFooter = (pageNumber: number) => {
+        doc.setDrawColor(220, 227, 226);
+        doc.setLineWidth(0.3);
+        doc.line(14, pageHeight - 14, pageWidth - 14, pageHeight - 14);
+        doc.setFont('Inter', 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(...muted);
+        doc.text(`RED HOOK DATA · ${String(pageNumber).padStart(2, '0')}`, pageWidth / 2, pageHeight - 7, { align: 'center' });
+      };
+      const drawContinuationHeader = () => {
+        doc.addImage(logoDataUrl, 'PNG', 14, 8, 24, 8.9);
+        doc.setFont('Inter', 'bold');
+        doc.setFontSize(10);
+        doc.setTextColor(...ink);
+        doc.text(forecastExportGroup.client.toUpperCase(), 45, 13.5);
+        doc.setFont('Inter', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(...muted);
+        doc.text(exportBrand, 45, 18);
+        drawAccentRule(23);
+      };
+      const cardWidth = (pageWidth - 36) / 3;
+      const drawKpiCard = (x: number, label: string, value: string) => {
+        doc.setFillColor(245, 247, 247);
+        doc.roundedRect(x, 58, cardWidth, 22, 2, 2, 'F');
+        doc.setFont('Inter', 'bold');
+        doc.setFontSize(7.2);
+        doc.setTextColor(...muted);
+        doc.text(label.toUpperCase(), x + 5, 65);
+        doc.setTextColor(...ink);
+        doc.setFontSize(value.length > 20 ? 10.5 : 13.5);
+        doc.text(value, x + 5, 74.5);
+      };
+      const drawFirstPageHeader = () => {
+        doc.addImage(logoDataUrl, 'PNG', 14, 8, 27, 10);
+        doc.setFont('Inter', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(...muted);
+        doc.text(generatedDateLabel, pageWidth - 14, 13.5, { align: 'right' });
+        drawAccentRule(22);
+
+        doc.setFont('Inter', 'bold');
+        doc.setFontSize(forecastExportGroup.client.length > 28 ? 17 : 21);
+        doc.setTextColor(...ink);
+        doc.text(forecastExportGroup.client.toUpperCase(), 14, 34);
+        doc.setFont('Inter', 'normal');
+        doc.setFontSize(10.5);
+        doc.setTextColor(...muted);
+        doc.text(exportBrand, 14, 42);
+
+        let contextX = 14;
+        doc.setFont('Inter', 'bold');
+        doc.setFontSize(7.5);
+        platforms.forEach((platform) => {
+          const platformLabel = platform.toUpperCase();
+          const chipWidth = 23;
+          doc.setFillColor(246, 247, 249);
+          doc.roundedRect(contextX, 47, chipWidth, 7, 3.5, 3.5, 'F');
+          doc.setTextColor(...ink);
+          doc.text(platformLabel, contextX + (chipWidth / 2), 52, { align: 'center' });
+          contextX += chipWidth + 3;
+        });
+        if (objectives.length > 0) {
+          doc.setFont('Inter', 'bold');
+          doc.setFontSize(7.5);
+          doc.setTextColor(...muted);
+          doc.text(objectives.map((objective) => objective.toUpperCase()).join(' · '), contextX + 2, 52);
+        }
+
+        drawKpiCard(14, 'Presupuesto', totalBudgetLabel);
+        drawKpiCard(18 + cardWidth, projectedResultLabel, integer.format(totalProjectedResults));
+        drawKpiCard(22 + (cardWidth * 2), 'Costo / resultado', blendedCostLabel);
+
+        doc.setFont('Inter', 'bold');
+        doc.setFontSize(8.5);
+        doc.setTextColor(...ink);
+        doc.text('CAMPAÑAS', 14, 90);
+        doc.setDrawColor(207, 217, 216);
+        doc.setLineWidth(0.3);
+        doc.line(38, 89, pageWidth - 14, 89);
+      };
+
+      const numericColumnKeys = new Set<ForecastExportColumnKey>([
+        'presupuesto',
+        'share',
+        'costoPorResultado',
+        'resultadosProyectados',
+        'tktPromedio',
+        'fcProyectada'
+      ]);
+      const columnWidthWeights: Record<ForecastExportColumnKey, number> = {
+        marca: 1.05,
+        plataforma: 0.9,
+        objetivo: 1,
+        campana: 1.15,
+        moneda: 0.65,
+        presupuesto: 1.05,
+        share: 0.65,
+        costoPorResultado: 1.1,
+        resultadosProyectados: 1.2,
+        tktPromedio: 0.75,
+        fcProyectada: 1.05
+      };
+      const selectedColumnsWeight = selectedColumns.reduce((sum, column) => sum + columnWidthWeights[column.key], 0);
+      const availableTableWidth = pageWidth - 28;
+      const tableColumnStyles: Record<number, {
+        halign?: 'left' | 'right';
+        fontStyle?: 'bold';
+        cellWidth?: number;
+      }> = {};
+      selectedColumns.forEach((column, index) => {
+        tableColumnStyles[index] = {
+          halign: numericColumnKeys.has(column.key) ? 'right' : 'left',
+          cellWidth: availableTableWidth * (columnWidthWeights[column.key] / selectedColumnsWeight)
+        };
+        if (column.key === 'resultadosProyectados') tableColumnStyles[index].fontStyle = 'bold';
+      });
+
+      drawFirstPageHeader();
+      autoTable(doc, {
+        startY: 95,
+        margin: { top: 28, right: 14, bottom: 16, left: 14 },
+        head: [selectedColumns.map((column) => (
+          column.key === 'resultadosProyectados' ? projectedResultLabel : column.label
+        ).toUpperCase())],
+        body: lines.map((line) => (
+          selectedColumns.map((column) => valueForColumn(line, column.key))
+        )),
+        theme: 'plain',
+        styles: {
+          font: 'Inter',
+          fontStyle: 'normal',
+          fontSize: selectedColumns.length > 8 ? 7.2 : 8.4,
+          cellPadding: { top: 2.5, right: 1.2, bottom: 2.5, left: 1.2 },
+          lineColor: [224, 230, 229],
+          lineWidth: { top: 0, right: 0, bottom: 0.18, left: 0 },
+          textColor: ink,
+          overflow: 'ellipsize'
+        },
+        headStyles: {
+          fillColor: green,
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: selectedColumns.length > 8 ? 6.7 : 7.4,
+          cellPadding: { top: 2.5, right: 1.2, bottom: 2.5, left: 1.2 },
+          lineWidth: 0
+        },
+        alternateRowStyles: { fillColor: [248, 250, 250] },
+        columnStyles: tableColumnStyles,
+        didDrawPage: () => {
+          const currentPage = doc.getCurrentPageInfo().pageNumber;
+          if (currentPage > 1) drawContinuationHeader();
+          drawFooter(currentPage);
+        }
+      });
+
+      const observations = forecastExportObservations.trim();
+      if (observations) {
+        const tableEndY = (doc as typeof doc & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 95;
+        const observationLines = doc.splitTextToSize(observations, pageWidth - 40);
+        const cardHeight = Math.max(18, 11 + (observationLines.length * 4.5));
+        let observationY = tableEndY + 13;
+        if (observationY + cardHeight + 12 > pageHeight - 14) {
+          doc.addPage();
+          drawContinuationHeader();
+          drawFooter(doc.getCurrentPageInfo().pageNumber);
+          observationY = 35;
+        }
+        doc.setFont('Inter', 'bold');
+        doc.setFontSize(8.5);
+        doc.setTextColor(...ink);
+        doc.text('OBSERVACIONES', 14, observationY);
+        doc.setFillColor(245, 247, 247);
+        doc.roundedRect(14, observationY + 5, pageWidth - 28, cardHeight, 2, 2, 'F');
+        doc.setFont('Inter', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(...ink);
+        doc.text(observationLines, 19, observationY + 14);
+      }
+
+      const pdfBuffer = doc.output('arraybuffer');
+      const pdfHeader = new TextDecoder('ascii').decode(pdfBuffer.slice(0, 5));
+      if (pdfHeader !== '%PDF-' || pdfBuffer.byteLength < 100) {
+        throw new Error('El archivo PDF generado no es válido');
+      }
+
+      const pdfBlob = new Blob([pdfBuffer], { type: 'application/pdf' });
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      const safeClient = forecastExportGroup.client.replace(/[^a-zA-Z0-9_-]+/g, '_');
+      const fileName = `forecast_${safeClient}_${previewMonth}.pdf`;
+
+      if (previewWindow) previewWindow.location.replace(pdfUrl);
+
+      const downloadLink = document.createElement('a');
+      downloadLink.href = pdfUrl;
+      downloadLink.download = fileName;
+      downloadLink.style.display = 'none';
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      window.setTimeout(() => URL.revokeObjectURL(pdfUrl), 60_000);
+      setForecastExportGroup(null);
+      setForecastExportObservations('');
+    } catch (error) {
+      previewWindow?.close();
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudo generar el PDF');
+    } finally {
+      setForecastExporting(false);
+    }
+  }
+
   if (authLoading) {
     return (
       <main className="auth-shell">
-        <div className="auth-loading">Validando sesion...</div>
+        <BrandLoader label="Validando sesión" />
       </main>
     );
   }
@@ -1632,6 +2039,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
 
   return (
     <main className="app-shell">
+      {showLoadingOverlay ? <BrandLoader /> : null}
       <header className="topbar">
         <div>
           <p className="eyebrow">{isManagementView ? 'MediaPulse CA' : 'MediaPulse RHD'}</p>
@@ -2125,6 +2533,17 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                       ) : (
                         <StatusBadge value={groupStatus} />
                       )}
+                      <button
+                        className="forecast-export-button"
+                        type="button"
+                        onClick={() => {
+                          setForecastExportGroup({ client: group.lines[0].anunciante, lines: group.lines });
+                          setForecastExportColumnsSelected(forecastExportColumns.map((column) => column.key));
+                          setForecastExportObservations('');
+                        }}
+                      >
+                        Exportar PDF
+                      </button>
                     </div>
                     {canEditManualPreview ? (
                       <div className="preview-title-actions">
@@ -2397,6 +2816,77 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {forecastExportGroup ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !forecastExporting) setForecastExportGroup(null);
+        }}>
+          <section className="forecast-export-modal" role="dialog" aria-modal="true" aria-labelledby="forecast-export-title">
+            <div className="forecast-export-modal-header">
+              <div>
+                <h2 id="forecast-export-title">Exportar Forecast a PDF</h2>
+                <p>{forecastExportGroup.client} · {forecastExportGroup.lines[0]?.marca || 'Sin marca'} · {formatMonthLabel(previewMonth)}</p>
+              </div>
+              <button
+                className="modal-close-button"
+                type="button"
+                onClick={() => setForecastExportGroup(null)}
+                aria-label="Cerrar modal de exportación"
+                disabled={forecastExporting}
+              >
+                ×
+              </button>
+            </div>
+
+            <fieldset className="forecast-export-columns">
+              <legend>Columnas a exportar</legend>
+              <div className="forecast-export-column-actions">
+                <button type="button" onClick={() => setForecastExportColumnsSelected(forecastExportColumns.map((column) => column.key))}>
+                  Seleccionar todas
+                </button>
+                <button type="button" onClick={() => setForecastExportColumnsSelected([])}>
+                  Limpiar
+                </button>
+              </div>
+              <div className="forecast-export-column-grid">
+                {forecastExportColumns.map((column) => (
+                  <label key={column.key}>
+                    <input
+                      type="checkbox"
+                      checked={forecastExportColumnsSelected.includes(column.key)}
+                      onChange={() => toggleForecastExportColumn(column.key)}
+                    />
+                    <span>{column.label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <label className="forecast-export-observations">
+              <span>Observaciones</span>
+              <textarea
+                value={forecastExportObservations}
+                onChange={(event) => setForecastExportObservations(event.target.value)}
+                placeholder="Escribí las observaciones que querés incluir en el PDF..."
+                rows={5}
+              />
+            </label>
+
+            {forecastExportColumnsSelected.length === 0 ? (
+              <p className="forecast-export-warning">Seleccioná al menos una columna para exportar.</p>
+            ) : null}
+
+            <div className="forecast-export-modal-actions">
+              <button className="secondary-button" type="button" onClick={() => setForecastExportGroup(null)} disabled={forecastExporting}>
+                Cancelar
+              </button>
+              <button className="primary-button" type="button" onClick={generateForecastPdf} disabled={forecastExporting || forecastExportColumnsSelected.length === 0}>
+                {forecastExporting ? 'Generando PDF...' : 'Descargar PDF'}
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
 
