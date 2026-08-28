@@ -774,7 +774,7 @@ export class InvestmentsService {
     if (!normalized) return '';
     if (normalized.includes('alcance') || normalized.includes('reach')) return 'Alcance';
     if (normalized.includes('lead')) return normalized.includes('mensaje') ? 'Leads-mensajes' : this.withGoogleObjectiveSubtype('Leads', value);
-    if (normalized.includes('youtube')) return 'Youtube';
+    if (normalized.includes('youtube')) return 'Views-YouTube';
     if (normalized.includes('local')) return 'Local campaing';
     if (normalized.includes('perfil')) return 'Visitas al perfil';
     if (normalized.includes('interaccion') || normalized.includes('engagement')) return 'Interaccion';
@@ -804,7 +804,8 @@ export class InvestmentsService {
   private objectivesAreCompatible(lineObjective: string, metricObjective: string): boolean {
     const compatibleGroups = [
       ['visitas-al-perfil', 'trafico'],
-      ['leads-mensajes', 'leads']
+      ['leads-mensajes', 'leads'],
+      ['youtube', 'views-youtube']
     ];
 
     return compatibleGroups.some((group) => (
@@ -844,7 +845,7 @@ export class InvestmentsService {
 
     const base = line.presupuesto / line.costoPorResultado;
     const objective = this.normalizeReference(line.objetivo);
-    return objective === 'alcance' || objective === 'youtube' ? base * 1000 : base;
+    return objective === 'alcance' || objective === 'youtube' || objective === 'views-youtube' ? base * 1000 : base;
   }
 
   private isSalesObjective(objective: string): boolean {

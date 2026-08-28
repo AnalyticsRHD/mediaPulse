@@ -6,3 +6,7 @@ dist
 coverage
 .next
 apps/api/data/mercado-libre-oauth.json
+
+# Local API/debug response dumps
+/*-response*.json
+/tmp_*.json

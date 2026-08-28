@@ -2725,7 +2725,7 @@ export class ExternalApisService {
     if (normalized.includes('alcance') || normalized.includes('reach')) return 'Alcance';
     if (normalized.includes('leadsmensajes') || normalized.includes('mensajes')) return 'Leads-mensajes';
     if (normalized.includes('lead')) return this.withGoogleObjectiveSubtype('Leads', value);
-    if (normalized.includes('youtube')) return 'Youtube';
+    if (normalized.includes('youtube')) return 'Views-YouTube';
     if (normalized.includes('local')) return 'Local campaing';
     if (normalized.includes('visitasalperfil') || normalized.includes('perfil')) return 'Visitas al perfil';
     if (normalized.includes('interaccion') || normalized.includes('engagement')) return 'Interaccion';

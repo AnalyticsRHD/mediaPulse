@@ -604,7 +604,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       moneda: String(row.moneda) as InvestmentCurrency,
       status: String(row.status) as InvestmentStatus,
       plataforma: String(row.plataforma),
-      objetivo: String(row.objetivo),
+      objetivo: this.canonicalObjective(String(row.objetivo)),
       campana: row.campana ? String(row.campana) : undefined,
       presupuesto: Number(row.presupuesto),
       costoPorResultado: Number(row.costo_por_resultado),
@@ -647,7 +647,7 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       campaignName: String(row.campaign_name || ''),
       adSetName: row.ad_set_name ? String(row.ad_set_name) : undefined,
       adGroupName: row.ad_group_name ? String(row.ad_group_name) : undefined,
-      objetivo: row.objetivo ? String(row.objetivo) : undefined,
+      objetivo: row.objetivo ? this.canonicalObjective(String(row.objetivo)) : undefined,
       referencia: row.referencia ? String(row.referencia) : undefined,
       accountId: row.account_id ? String(row.account_id) : undefined,
       accountName: row.account_name ? String(row.account_name) : undefined,
@@ -670,6 +670,10 @@ export class ManualInvestmentsRepository implements OnApplicationShutdown {
       userName: String(row.user_name || 'Sistema'),
       createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : new Date().toISOString()
     };
+  }
+
+  private canonicalObjective(value: string): string {
+    return value.trim().toLowerCase() === 'youtube' ? 'Views-YouTube' : value;
   }
 
   private toManualSnapshot(value: unknown): ManualInvestmentLine {

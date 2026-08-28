@@ -21,7 +21,7 @@ const baseObjectives = [
   'Leads',
   'Trafico',
   'Leads-mensajes',
-  'Youtube',
+  'Views-YouTube',
   'Local campaing',
   'Visitas al perfil',
   'Interaccion'
