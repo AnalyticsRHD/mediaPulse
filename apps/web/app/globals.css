@@ -1670,7 +1670,7 @@ tbody tr:nth-child(even) {
 
 .preview-block th:first-child,
 .preview-block td:first-child {
-  width: 68px;
+  width: 104px;
 }
 
 .preview-block th:nth-child(2),
@@ -1695,7 +1695,7 @@ tbody tr:nth-child(even) {
 
 .preview-block th:nth-child(5),
 .preview-block td:nth-child(5) {
-  width: 64px;
+  width: 52px;
   text-align: center;
 }
 
@@ -1709,8 +1709,8 @@ tbody tr:nth-child(even) {
 
 .preview-block th:nth-child(7),
 .preview-block td:nth-child(7) {
-  padding-left: 12px;
-  width: 62px;
+  padding-left: 6px;
+  width: 50px;
   text-align: center;
 }
 
@@ -1722,13 +1722,13 @@ tbody tr:nth-child(even) {
 
 .preview-block th:nth-child(9),
 .preview-block td:nth-child(9) {
-  width: 112px;
+  width: 100px;
   text-align: center;
 }
 
 .preview-block th:nth-child(10),
 .preview-block td:nth-child(10) {
-  width: 86px;
+  width: 74px;
   text-align: right;
 }
 
