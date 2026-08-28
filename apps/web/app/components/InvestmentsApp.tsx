@@ -6,6 +6,9 @@ import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
 import { BrandLoader } from './BrandLoader';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
+const MAX_BLOCKING_LOADER_MS = 5_000;
+const VIEW_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const VIEW_CACHE_PREFIX = 'mediapulse-view-cache:';
 const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
 const currencies = ['ARS', 'CHL', 'USD'] as const;
 const investmentStatuses = ['EN_PROCESO', 'PRESUPUESTO_OK'] as const;
@@ -103,6 +106,11 @@ type AuthUser = {
 type LoginResponse = {
   token: string;
   user: AuthUser;
+};
+
+type CachedView<T> = {
+  savedAt: number;
+  payload: T;
 };
 
 type MetricsSyncStatus = {
@@ -773,6 +781,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const [creditAllocationPlatforms, setCreditAllocationPlatforms] = useState<string[]>([]);
   const [managementPlatformFilter, setManagementPlatformFilter] = useState('');
   const [loading, setLoading] = useState(true);
+  const [blockingLoaderVisible, setBlockingLoaderVisible] = useState(true);
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
   const [datePreset, setDatePreset] = useState<DatePreset>('thisMonth');
@@ -943,10 +952,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const manualPreviewMonthFinished = isFinishedMonth(previewMonth);
   const canEditManualPreview = canManageManualLines && !manualPreviewMonthFinished;
   const syncRunning = syncing || consumptionSyncStatus?.status === 'running';
-  const showLoadingOverlay = loading
-    || syncRunning
-    || creditAllocationsLoading
-    || creditAllocationSyncRunning
+  const showLoadingOverlay = (loading && !data)
     || saving
     || historyLoading
     || deviationSaving
@@ -1000,6 +1006,30 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
     return payload as T;
   }
 
+  function readViewCache<T>(key: string): T | null {
+    try {
+      const storageKey = `${VIEW_CACHE_PREFIX}${key}`;
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return null;
+      const cached = JSON.parse(raw) as CachedView<T>;
+      if (!cached?.savedAt || Date.now() - cached.savedAt > VIEW_CACHE_MAX_AGE_MS) {
+        localStorage.removeItem(storageKey);
+        return null;
+      }
+      return cached.payload;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeViewCache<T>(key: string, payload: T) {
+    try {
+      localStorage.setItem(`${VIEW_CACHE_PREFIX}${key}`, JSON.stringify({ savedAt: Date.now(), payload }));
+    } catch {
+      // El cache es opcional y nunca debe impedir la carga desde la API.
+    }
+  }
+
   function handleLogout() {
     localStorage.removeItem('mediapulse-auth');
     setAuthToken('');
@@ -1010,15 +1040,24 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   }
 
   async function loadInvestments(range = selectedRange, preset = datePreset) {
+    const mes = getQueryMonth(preset, range);
+    const cacheKey = `control:${mes}:${range.startDate}:${range.endDate}:${preset}`;
+    let cachedData: InvestmentResponse | null = null;
+    if (!data) {
+      cachedData = readViewCache<InvestmentResponse>(cacheKey);
+      if (cachedData) setData(cachedData);
+    }
     setLoading(true);
     setErrorMessage('');
     try {
-      const mes = getQueryMonth(preset, range);
       const payload = await requestJson<InvestmentResponse>(`${API_BASE}/investments?mes=${mes}&startDate=${range.startDate}&endDate=${range.endDate}&mode=${preset}`, { cache: 'no-store' });
       setData(payload);
+      writeViewCache(cacheKey, payload);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'No se pudo cargar inversiones');
-      setData(null);
+      if (!cachedData && !data) {
+        setErrorMessage(error instanceof Error ? error.message : 'No se pudo cargar inversiones');
+        setData(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -1032,13 +1071,22 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   }
 
   async function loadManualPreview(month = previewMonth) {
+    const cacheKey = `manual:${month}`;
+    let cachedData: InvestmentResponse | null = null;
+    if (!manualData) {
+      cachedData = readViewCache<InvestmentResponse>(cacheKey);
+      if (cachedData) setManualData(cachedData);
+    }
     try {
       const range = monthRange(month);
       const payload = await requestJson<InvestmentResponse>(`${API_BASE}/investments?mes=${month}&startDate=${range.startDate}&endDate=${range.endDate}&includeDrafts=true&mode=custom`, { cache: 'no-store' });
       setManualData(payload);
+      writeViewCache(cacheKey, payload);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'No se pudo cargar la carga manual');
-      setManualData(null);
+      if (!cachedData && !manualData) {
+        setErrorMessage(error instanceof Error ? error.message : 'No se pudo cargar la carga manual');
+        setManualData(null);
+      }
     }
   }
 
@@ -1078,6 +1126,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
     } finally {
       setCreditAllocationsLoading(false);
     }
+  }
+
+  function navigateToTab(tab: InvestmentTab) {
+    if (tab === activeTab) return;
+    const path = tab === 'manual' ? '/carga-manual' : tab === 'management' ? '/CreditAlloc' : '/control';
+    window.history.pushState({ ...window.history.state, mediaPulseTab: tab }, '', path);
+    setActiveTab(tab);
   }
 
   useEffect(() => {
@@ -1214,10 +1269,21 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
         }
 
         const session = JSON.parse(raw) as LoginResponse;
+        // La sesion guardada permite pintar la vista sin esperar el cold start de la API.
+        // /auth/me sigue validandola en segundo plano antes de aceptar operaciones.
+        setAuthToken(session.token);
+        setAuthUser(session.user);
+        setViewAs(viewAsClients[session.user.email.toLowerCase()] ? session.user.email.toLowerCase() : GENERAL_VIEW);
+        setAuthLoading(false);
+
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), MAX_BLOCKING_LOADER_MS);
         const response = await fetch(`${API_BASE}/auth/me`, {
           headers: { Authorization: `Bearer ${session.token}` },
-          cache: 'no-store'
+          cache: 'no-store',
+          signal: controller.signal
         });
+        window.clearTimeout(timeout);
 
         if (!response.ok) {
           localStorage.removeItem('mediapulse-auth');
@@ -1234,7 +1300,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
         setAuthUser(user);
         const email = user.email.toLowerCase();
         setViewAs(viewAsClients[email] ? email : GENERAL_VIEW);
-      } catch {
+      } catch (error) {
+        // Un timeout o una caida temporal de la API no debe expulsar una sesion local valida.
+        if (error instanceof DOMException && error.name === 'AbortError') return;
         localStorage.removeItem('mediapulse-auth');
         router.replace(`/login?from=${initialTab === 'manual' ? '/carga-manual' : initialTab === 'management' ? '/CreditAlloc' : '/control'}`);
       } finally {
@@ -1244,6 +1312,26 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
 
     restoreSession();
   }, [initialTab, router]);
+
+  useEffect(() => {
+    if (!showLoadingOverlay) {
+      setBlockingLoaderVisible(false);
+      return;
+    }
+
+    setBlockingLoaderVisible(true);
+    const timeout = window.setTimeout(() => setBlockingLoaderVisible(false), MAX_BLOCKING_LOADER_MS);
+    return () => window.clearTimeout(timeout);
+  }, [showLoadingOverlay]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.toLowerCase();
+      setActiveTab(path === '/carga-manual' ? 'manual' : path === '/creditalloc' ? 'management' : 'control');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     if (!authToken || activeTab === 'management') return;
@@ -1271,17 +1359,17 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   }, [authToken, activeTab, consumptionSyncStatus?.status, datePreset, customRange, selectedRange.startDate, selectedRange.endDate]);
 
   useEffect(() => {
-    if (!authToken || activeTab === 'management') return;
+    if (!authToken || activeTab !== 'control') return;
     loadInvestments().catch(() => setLoading(false));
   }, [authToken, activeTab, datePreset, selectedRange.startDate, selectedRange.endDate]);
 
   useEffect(() => {
-    if (!authToken || activeTab === 'management') return;
+    if (!authToken || activeTab !== 'manual') return;
     loadManualPreview().catch(() => undefined);
   }, [authToken, activeTab, previewMonth]);
 
   useEffect(() => {
-    if (!authToken || activeTab === 'management') return;
+    if (!authToken || activeTab !== 'manual') return;
     loadManualHistory().catch(() => undefined);
   }, [authToken, activeTab]);
 
@@ -2039,7 +2127,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
 
   return (
     <main className="app-shell">
-      {showLoadingOverlay ? <BrandLoader /> : null}
+      {showLoadingOverlay && blockingLoaderVisible ? <BrandLoader /> : null}
       <header className="topbar">
         <div>
           <p className="eyebrow">{isManagementView ? 'MediaPulse CA' : 'MediaPulse RHD'}</p>
@@ -2084,14 +2172,14 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
 
       <div className="navigation-row">
         <nav className="tabs" aria-label="Vistas de inversiones">
-          <button className={activeTab === 'control' ? 'active' : ''} onClick={() => router.push('/control')}>
+          <button className={activeTab === 'control' ? 'active' : ''} onClick={() => navigateToTab('control')}>
             Control
           </button>
-          <button className={activeTab === 'manual' ? 'active' : ''} onClick={() => router.push('/carga-manual')}>
+          <button className={activeTab === 'manual' ? 'active' : ''} onClick={() => navigateToTab('manual')}>
            Forecast
           </button>
           {authUser.role === 'ADMIN' ? (
-            <button className={activeTab === 'management' ? 'active' : ''} onClick={() => router.push('/CreditAlloc')}>
+            <button className={activeTab === 'management' ? 'active' : ''} onClick={() => navigateToTab('management')}>
               CA
             </button>
           ) : null}

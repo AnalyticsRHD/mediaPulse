@@ -16,6 +16,7 @@ export class InvestmentsService {
   private readonly logger = new Logger(InvestmentsService.name);
   private manualLines = new Map<string, ManualInvestmentLine>();
   private manualLinesHydrated = false;
+  private manualLinesHydrationPromise: Promise<void> | null = null;
 
   constructor(
     @Inject(forwardRef(() => MetricsService))
@@ -30,10 +31,10 @@ export class InvestmentsService {
     startDate = date,
     endDate = date,
     includeDrafts = false,
-    mode: InvestmentRangeMode = 'thisMonth'
+    mode: InvestmentRangeMode = 'thisMonth',
+    persistSnapshots = false
   ): Promise<InvestmentsResponse> {
     await this.hydrateManualLines();
-    await this.metricsService.reloadPersistedMetrics();
     const safeStartDate = this.ensureDate(startDate, 'startDate');
     const safeEndDate = this.ensureDate(endDate, 'endDate');
     const resolvedMes = this.ensureMonth(mes || safeStartDate.slice(0, 7), 'mes');
@@ -56,7 +57,13 @@ export class InvestmentsService {
       .filter((line) => line.mes === resolvedMes)
       .filter((line) => includeDrafts || line.status === InvestmentStatus.PRESUPUESTO_OK)
       .sort((a, b) => this.sortManualLines(a, b));
-    const latestDeviationComments = await this.manualInvestmentsRepository.findLatestDeviationCommentsByLineIds(lines.map((line) => line.id));
+    const latestDeviationComments = await this.manualInvestmentsRepository
+      .findLatestDeviationCommentsByLineIds(lines.map((line) => line.id))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Could not load deviation comments; serving investments without them: ${message}`);
+        return new Map<string, InvestmentDeviationComment>();
+      });
     const totalBudget = lines.reduce((sum, line) => sum + line.presupuesto, 0);
     const builtLines = lines.map((line) => this.toInvestmentLine(
       line,
@@ -70,7 +77,9 @@ export class InvestmentsService {
       rangeMode,
       latestDeviationComments.get(line.id) ?? null
     ));
-    await this.persistConsumptionSnapshots(builtLines);
+    if (persistSnapshots) {
+      await this.persistConsumptionSnapshots(builtLines);
+    }
     const investmentLines = builtLines.map((builtLine) => builtLine.line);
     const consumoTotal = investmentLines.reduce((sum, line) => sum + line.consumo, 0);
 
@@ -97,7 +106,7 @@ export class InvestmentsService {
     const month = this.ensureMonth(date.slice(0, 7), 'mes');
     const startDate = `${month}-01`;
 
-    await this.findAll(month, date, startDate, date, true, 'thisMonth');
+    await this.findAll(month, date, startDate, date, true, 'thisMonth', true);
   }
 
   async createManualLine(dto: ManualInvestmentDto, user?: AuthUser): Promise<ManualInvestmentLine> {
@@ -1091,16 +1100,25 @@ export class InvestmentsService {
   }
 
   private async hydrateManualLines(): Promise<void> {
-    try {
-      const databaseLines = await this.manualInvestmentsRepository.findAll();
-      this.manualLines = new Map(databaseLines.map((line) => [line.id, line]));
-      this.manualLinesHydrated = true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Could not hydrate manual investment lines: ${message}`, error instanceof Error ? error.stack : undefined);
-      this.manualLinesHydrated = false;
-      throw new ServiceUnavailableException('No se pudieron cargar las inversiones');
-    }
+    if (this.manualLinesHydrated) return;
+    if (this.manualLinesHydrationPromise) return this.manualLinesHydrationPromise;
+
+    this.manualLinesHydrationPromise = (async () => {
+      try {
+        const databaseLines = await this.manualInvestmentsRepository.findAll();
+        this.manualLines = new Map(databaseLines.map((line) => [line.id, line]));
+        this.manualLinesHydrated = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Could not hydrate manual investment lines: ${message}`, error instanceof Error ? error.stack : undefined);
+        this.manualLinesHydrated = false;
+        throw new ServiceUnavailableException('No se pudieron cargar las inversiones');
+      } finally {
+        this.manualLinesHydrationPromise = null;
+      }
+    })();
+
+    return this.manualLinesHydrationPromise;
   }
 
   private async persistManualLine(line: ManualInvestmentLine): Promise<void> {
