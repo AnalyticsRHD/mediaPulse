@@ -4,6 +4,7 @@ type BrandLoaderProps = {
   label?: string;
   special?: boolean;
   specialSrc?: string;
+  specialTheme?: 'default' | 'franco';
 };
 
 const DEFAULT_SPECIAL_LOADER_SRC = 'https://media1.tenor.com/m/bkJxYJ_AvxcAAAAd/jesus-dancing.gif';
@@ -12,9 +13,12 @@ const FRANCO_SPECIAL_LOADER_SRC = 'https://media.tenor.com/ECsezOJfFP0AAAAM/mart
 export function BrandLoader({
   label = 'Cargando',
   special = false,
-  specialSrc = DEFAULT_SPECIAL_LOADER_SRC
+  specialSrc = DEFAULT_SPECIAL_LOADER_SRC,
+  specialTheme = 'default'
 }: BrandLoaderProps) {
-  const isFrancoTheme = special && specialSrc === FRANCO_SPECIAL_LOADER_SRC;
+  const isFrancoTheme = special && (
+    specialTheme === 'franco' || specialSrc === FRANCO_SPECIAL_LOADER_SRC
+  );
 
   return (
     <div

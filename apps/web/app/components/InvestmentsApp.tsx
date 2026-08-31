@@ -1839,7 +1839,6 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
       const platforms = uniqueValues(lines.map((line) => line.plataforma));
       const objectives = uniqueValues(lines.map((line) => line.objetivo));
       const currenciesInPlan = uniqueValues(lines.map((line) => line.moneda)) as InvestmentCurrency[];
-      const totalProjectedResults = lines.reduce((sum, line) => sum + line.resultadosProyectados, 0);
       const normalizedObjective = objectives.length === 1 ? normalizeTypeaheadText(objectives[0]) : '';
       const projectedResultLabel = (() => {
         if (!normalizedObjective) return 'Resultados proyectados';
@@ -1858,23 +1857,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
         ))
         .join(' · ');
       const totalBudgetLabel = aggregateMoney((line) => line.presupuesto);
-      const blendedCostLabel = currenciesInPlan
-        .map((currency) => {
-          const currencyLines = lines.filter((line) => line.moneda === currency);
-          const currencyBudget = currencyLines.reduce((sum, line) => sum + line.presupuesto, 0);
-          const currencyResults = currencyLines.reduce((sum, line) => sum + line.resultadosProyectados, 0);
-          const blendedCost = currencyResults > 0
-            ? currencyBudget / currencyResults
-            : currencyLines.reduce((sum, line) => sum + line.costoPorResultado, 0) / Math.max(currencyLines.length, 1);
-          return formatMoney(blendedCost, currency);
-        })
-        .join(' · ');
-      const generatedDateLabel = new Intl.DateTimeFormat('es-AR', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        timeZone: OPERATIONAL_TIME_ZONE
-      }).format(new Date()).replace(/\./g, '').toUpperCase();
+      const exportedMonthLabel = `MES DE ${formatMonthLabel(previewMonth).toUpperCase()}`;
 
       const doc = new jsPDF({
         orientation: 'landscape',
@@ -1925,24 +1908,24 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
         doc.text(exportBrand, 45, 18);
         drawAccentRule(23);
       };
-      const cardWidth = (pageWidth - 36) / 3;
+      const cardWidth = 74;
       const drawKpiCard = (x: number, label: string, value: string) => {
         doc.setFillColor(245, 247, 247);
-        doc.roundedRect(x, 58, cardWidth, 22, 2, 2, 'F');
+        doc.roundedRect(x, 26, cardWidth, 21, 2, 2, 'F');
         doc.setFont('Inter', 'bold');
         doc.setFontSize(7.2);
         doc.setTextColor(...muted);
-        doc.text(label.toUpperCase(), x + 5, 65);
+        doc.text(label.toUpperCase(), x + 5, 34);
         doc.setTextColor(...ink);
         doc.setFontSize(value.length > 20 ? 10.5 : 13.5);
-        doc.text(value, x + 5, 74.5);
+        doc.text(value, x + 5, 42.5);
       };
       const drawFirstPageHeader = () => {
         doc.addImage(logoDataUrl, 'PNG', 14, 8, 27, 10);
         doc.setFont('Inter', 'normal');
         doc.setFontSize(8);
         doc.setTextColor(...muted);
-        doc.text(generatedDateLabel, pageWidth - 14, 13.5, { align: 'right' });
+        doc.text(exportedMonthLabel, pageWidth - 14, 13.5, { align: 'right' });
         drawAccentRule(22);
 
         doc.setFont('Inter', 'bold');
@@ -1961,39 +1944,29 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
           const platformLabel = platform.toUpperCase();
           const chipWidth = 23;
           doc.setFillColor(246, 247, 249);
-          doc.roundedRect(contextX, 47, chipWidth, 7, 3.5, 3.5, 'F');
+          doc.roundedRect(contextX, 51, chipWidth, 7, 3.5, 3.5, 'F');
           doc.setTextColor(...ink);
-          doc.text(platformLabel, contextX + (chipWidth / 2), 52, { align: 'center' });
+          doc.text(platformLabel, contextX + (chipWidth / 2), 56, { align: 'center' });
           contextX += chipWidth + 3;
         });
         if (objectives.length > 0) {
           doc.setFont('Inter', 'bold');
           doc.setFontSize(7.5);
           doc.setTextColor(...muted);
-          doc.text(objectives.map((objective) => objective.toUpperCase()).join(' · '), contextX + 2, 52);
+          doc.text(objectives.map((objective) => objective.toUpperCase()).join(' · '), contextX + 2, 56);
         }
 
-        drawKpiCard(14, 'Presupuesto', totalBudgetLabel);
-        drawKpiCard(18 + cardWidth, projectedResultLabel, integer.format(totalProjectedResults));
-        drawKpiCard(22 + (cardWidth * 2), 'Costo / resultado', blendedCostLabel);
+        drawKpiCard(pageWidth - 14 - cardWidth, 'Presupuesto', totalBudgetLabel);
 
         doc.setFont('Inter', 'bold');
         doc.setFontSize(8.5);
         doc.setTextColor(...ink);
-        doc.text('CAMPAÑAS', 14, 90);
+        doc.text('CAMPAÑAS', 14, 66);
         doc.setDrawColor(207, 217, 216);
         doc.setLineWidth(0.3);
-        doc.line(38, 89, pageWidth - 14, 89);
+        doc.line(38, 65, pageWidth - 14, 65);
       };
 
-      const numericColumnKeys = new Set<ForecastExportColumnKey>([
-        'presupuesto',
-        'share',
-        'costoPorResultado',
-        'resultadosProyectados',
-        'tktPromedio',
-        'fcProyectada'
-      ]);
       const columnWidthWeights: Record<ForecastExportColumnKey, number> = {
         marca: 1.05,
         plataforma: 0.9,
@@ -2010,13 +1983,13 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
       const selectedColumnsWeight = selectedColumns.reduce((sum, column) => sum + columnWidthWeights[column.key], 0);
       const availableTableWidth = pageWidth - 28;
       const tableColumnStyles: Record<number, {
-        halign?: 'left' | 'right';
+        halign?: 'center';
         fontStyle?: 'bold';
         cellWidth?: number;
       }> = {};
       selectedColumns.forEach((column, index) => {
         tableColumnStyles[index] = {
-          halign: numericColumnKeys.has(column.key) ? 'right' : 'left',
+          halign: 'center',
           cellWidth: availableTableWidth * (columnWidthWeights[column.key] / selectedColumnsWeight)
         };
         if (column.key === 'resultadosProyectados') tableColumnStyles[index].fontStyle = 'bold';
@@ -2024,7 +1997,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
 
       drawFirstPageHeader();
       autoTable(doc, {
-        startY: 95,
+        startY: 71,
         margin: { top: 28, right: 14, bottom: 16, left: 14 },
         head: [selectedColumns.map((column) => (
           column.key === 'resultadosProyectados' ? projectedResultLabel : column.label
@@ -2053,6 +2026,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
         },
         alternateRowStyles: { fillColor: [248, 250, 250] },
         columnStyles: tableColumnStyles,
+        didParseCell: (hookData) => {
+          const column = selectedColumns[hookData.column.index];
+          if (column) {
+            hookData.cell.styles.halign = 'center';
+          }
+        },
         didDrawPage: () => {
           const currentPage = doc.getCurrentPageInfo().pageNumber;
           if (currentPage > 1) drawContinuationHeader();

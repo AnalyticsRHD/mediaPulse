@@ -8,7 +8,7 @@ import { BrandLoader } from '../components/BrandLoader';
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
 const FRANCISCO_EMAIL = 'francisco@redhookdata.com';
 const FRANCO_EMAIL = 'franco@redhookdata.com';
-const SPECIAL_LOGIN_LOADER_MS = 2_500;
+const SPECIAL_LOGIN_LOADER_MS = 2_000;
 const FRANCISCO_LOADER_SRC = 'https://media1.tenor.com/m/bkJxYJ_AvxcAAAAd/jesus-dancing.gif';
 const FRANCO_LOADER_SRC = 'https://media.tenor.com/ECsezOJfFP0AAAAM/martin-palermo-boca.gif';
 
