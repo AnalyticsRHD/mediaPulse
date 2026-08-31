@@ -6,6 +6,11 @@ import logo from '../../assets/logo.png';
 import { BrandLoader } from '../components/BrandLoader';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
+const FRANCISCO_EMAIL = 'francisco@redhookdata.com';
+const FRANCO_EMAIL = 'franco@redhookdata.com';
+const SPECIAL_LOGIN_LOADER_MS = 2_500;
+const FRANCISCO_LOADER_SRC = 'https://media1.tenor.com/m/bkJxYJ_AvxcAAAAd/jesus-dancing.gif';
+const FRANCO_LOADER_SRC = 'https://media.tenor.com/ECsezOJfFP0AAAAM/martin-palermo-boca.gif';
 
 type AuthUser = {
   id: string;
@@ -38,6 +43,7 @@ export default function LoginPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const loginStartedAt = Date.now();
     setLoading(true);
     setErrorMessage('');
     let navigationStarted = false;
@@ -57,6 +63,11 @@ export default function LoginPage() {
 
       const session = payload as LoginResponse;
       localStorage.setItem('mediapulse-auth', JSON.stringify(session));
+      const authenticatedEmail = session.user.email.toLowerCase();
+      if (authenticatedEmail === FRANCISCO_EMAIL || authenticatedEmail === FRANCO_EMAIL) {
+        const remaining = Math.max(0, SPECIAL_LOGIN_LOADER_MS - (Date.now() - loginStartedAt));
+        await new Promise((resolve) => window.setTimeout(resolve, remaining));
+      }
       navigationStarted = true;
       router.replace(redirectTo);
     } catch (error) {
@@ -68,7 +79,13 @@ export default function LoginPage() {
 
   return (
     <main className="login-page">
-      {loading ? <BrandLoader label="Iniciando sesión" /> : null}
+      {loading ? (
+        <BrandLoader
+          label="Iniciando sesión"
+          special={email.trim().toLowerCase() === FRANCISCO_EMAIL || email.trim().toLowerCase() === FRANCO_EMAIL}
+          specialSrc={email.trim().toLowerCase() === FRANCO_EMAIL ? FRANCO_LOADER_SRC : FRANCISCO_LOADER_SRC}
+        />
+      ) : null}
       <section className="login-hero">
       </section>
       <section className="login-panel">

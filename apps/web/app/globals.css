@@ -59,6 +59,15 @@ select {
   pointer-events: none;
 }
 
+.brand-loader-overlay-franco {
+  background:
+    radial-gradient(circle at 20% 35%, rgba(255, 214, 0, 0.32), transparent 28%),
+    radial-gradient(circle at 80% 65%, rgba(255, 184, 0, 0.28), transparent 30%),
+    linear-gradient(115deg, #111a78 0%, #17258f 36%, #f5b800 48%, #ffd21a 56%, #17258f 68%, #111a78 100%);
+  background-size: 180% 180%, 180% 180%, 240% 240%;
+  animation: franco-loader-bg 2.5s ease-in-out infinite alternate;
+}
+
 .brand-loader-logo {
   width: clamp(180px, 24vw, 300px);
   height: auto;
@@ -74,6 +83,22 @@ select {
   border: 0;
   pointer-events: none;
   user-select: none;
+}
+
+.special-loader-gif-franco {
+  width: min(520px, 82vw);
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes franco-loader-bg {
+  0% {
+    background-position: 0% 25%, 100% 75%, 0% 50%;
+  }
+
+  100% {
+    background-position: 75% 70%, 25% 30%, 100% 50%;
+  }
 }
 
 .visually-hidden {
@@ -105,6 +130,10 @@ select {
   .brand-loader-logo {
     animation-duration: 2.4s;
     transform: none;
+  }
+
+  .brand-loader-overlay-franco {
+    animation: none;
   }
 }
 
