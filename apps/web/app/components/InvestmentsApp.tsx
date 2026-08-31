@@ -7,6 +7,9 @@ import { BrandLoader } from './BrandLoader';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
 const MAX_BLOCKING_LOADER_MS = 5_000;
+const SPECIAL_LOADER_EMAIL = 'francisco@redhookdata.com';
+const SPECIAL_LOADER_MIN_MS = 7_000;
+const SPECIAL_LOADER_MAX_MS = 10_000;
 const VIEW_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const VIEW_CACHE_PREFIX = 'mediapulse-view-cache:';
 const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
@@ -782,6 +785,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   const [managementPlatformFilter, setManagementPlatformFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [blockingLoaderVisible, setBlockingLoaderVisible] = useState(true);
+  const blockingLoaderStartedAt = useRef<number | null>(null);
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
   const [datePreset, setDatePreset] = useState<DatePreset>('thisMonth');
@@ -1314,15 +1318,28 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
   }, [initialTab, router]);
 
   useEffect(() => {
+    const isSpecialLoader = authUser?.email.toLowerCase() === SPECIAL_LOADER_EMAIL;
+
     if (!showLoadingOverlay) {
-      setBlockingLoaderVisible(false);
-      return;
+      const elapsed = blockingLoaderStartedAt.current === null
+        ? SPECIAL_LOADER_MIN_MS
+        : Date.now() - blockingLoaderStartedAt.current;
+      const remaining = isSpecialLoader ? Math.max(0, SPECIAL_LOADER_MIN_MS - elapsed) : 0;
+      const timeout = window.setTimeout(() => {
+        setBlockingLoaderVisible(false);
+        blockingLoaderStartedAt.current = null;
+      }, remaining);
+      return () => window.clearTimeout(timeout);
     }
 
+    if (blockingLoaderStartedAt.current === null) blockingLoaderStartedAt.current = Date.now();
     setBlockingLoaderVisible(true);
-    const timeout = window.setTimeout(() => setBlockingLoaderVisible(false), MAX_BLOCKING_LOADER_MS);
+    const timeout = window.setTimeout(
+      () => setBlockingLoaderVisible(false),
+      isSpecialLoader ? SPECIAL_LOADER_MAX_MS : MAX_BLOCKING_LOADER_MS
+    );
     return () => window.clearTimeout(timeout);
-  }, [showLoadingOverlay]);
+  }, [authUser?.email, showLoadingOverlay]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -2127,7 +2144,9 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
 
   return (
     <main className="app-shell">
-      {showLoadingOverlay && blockingLoaderVisible ? <BrandLoader /> : null}
+      {blockingLoaderVisible ? (
+        <BrandLoader special={authUser.email.toLowerCase() === SPECIAL_LOADER_EMAIL} />
+      ) : null}
       <header className="topbar">
         <div>
           <p className="eyebrow">{isManagementView ? 'MediaPulse CA' : 'MediaPulse RHD'}</p>

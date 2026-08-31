@@ -40,6 +40,7 @@ export default function LoginPage() {
     event.preventDefault();
     setLoading(true);
     setErrorMessage('');
+    let navigationStarted = false;
 
     try {
       const response = await fetch(`${API_BASE}/auth/login`, {
@@ -54,12 +55,14 @@ export default function LoginPage() {
         throw new Error(Array.isArray(message) ? message.join(', ') : message || 'No se pudo iniciar sesion');
       }
 
-      localStorage.setItem('mediapulse-auth', JSON.stringify(payload as LoginResponse));
+      const session = payload as LoginResponse;
+      localStorage.setItem('mediapulse-auth', JSON.stringify(session));
+      navigationStarted = true;
       router.replace(redirectTo);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'No se pudo iniciar sesion');
     } finally {
-      setLoading(false);
+      if (!navigationStarted) setLoading(false);
     }
   }
 

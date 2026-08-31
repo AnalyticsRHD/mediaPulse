@@ -54,12 +54,26 @@ select {
   cursor: wait;
 }
 
+.brand-loader-overlay-special {
+  background: #7bbac8;
+  pointer-events: none;
+}
+
 .brand-loader-logo {
   width: clamp(180px, 24vw, 300px);
   height: auto;
   animation: rhd-loader-pulse 1.15s ease-in-out infinite;
   filter: drop-shadow(0 14px 25px rgba(24, 68, 71, 0.12));
   will-change: opacity, transform, filter;
+}
+
+.special-loader-gif {
+  width: min(320px, 72vw);
+  height: auto;
+  display: block;
+  border: 0;
+  pointer-events: none;
+  user-select: none;
 }
 
 .visually-hidden {
