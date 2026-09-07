@@ -309,7 +309,12 @@ export class ConfigService {
   }
 
   get jwtSecret(): string {
-    return this.cleanPlaceholder(process.env.JWT_SECRET || '') || 'mediapulse-local-dev-secret';
+    const configuredSecret = this.cleanPlaceholder(process.env.JWT_SECRET || '');
+    if (configuredSecret) return configuredSecret;
+    if (this.isProduction()) {
+      throw new Error('JWT_SECRET is required in production');
+    }
+    return 'mediapulse-local-dev-secret';
   }
 
   get jwtExpiresIn(): string {
@@ -331,7 +336,7 @@ export class ConfigService {
   private cleanPlaceholder(value: string): string {
     const clean = value.trim();
     if (!clean) return '';
-    if (/^(your_|tu_|advertiser_id_|placeholder)/i.test(clean)) return '';
+    if (/^(your_|tu_|advertiser_id_|placeholder|replace_)/i.test(clean)) return '';
     return clean;
   }
 

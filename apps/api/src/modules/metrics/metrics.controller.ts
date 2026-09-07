@@ -1,6 +1,8 @@
 import { Controller, Get, Post, Put, Delete, Param, Body, Query, Logger } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { MetricsService } from './metrics.service';
 import { CreateDailyMetricsDto, UpdateDailyMetricsDto } from './dto/create-daily-metrics.dto';
+import { SWAGGER_TAGS } from '../../common/swagger/swagger-tags';
 import {
   AdsMetricsSource,
   ExternalApisService,
@@ -21,46 +23,55 @@ export class MetricsController {
   ) {}
 
   @Get()
+  @ApiTags(SWAGGER_TAGS.METRICS)
   getAll() {
     return this.metricsService.findAll();
   }
 
   @Get('range')
+  @ApiTags(SWAGGER_TAGS.METRICS)
   getByDateRange(@Query('startDate') startDate: string, @Query('endDate') endDate: string) {
     return this.metricsService.findByDateRange(startDate, endDate);
   }
 
   @Get('campaign/:campaignId')
+  @ApiTags(SWAGGER_TAGS.METRICS)
   getByCampaign(@Param('campaignId') campaignId: string) {
     return this.metricsService.findByCampaign(campaignId);
   }
 
   @Get('client/:cliente/date/:date')
+  @ApiTags(SWAGGER_TAGS.METRICS)
   getByClientAndDate(@Param('cliente') cliente: string, @Param('date') date: string) {
     return this.metricsService.findByClientAndDate(cliente, date);
   }
 
   @Get('summary/:cliente/:date')
+  @ApiTags(SWAGGER_TAGS.METRICS)
   getSummary(@Param('cliente') cliente: string, @Param('date') date: string) {
     return this.metricsService.getSummary(cliente, date);
   }
 
   @Get('sync/status')
+  @ApiTags(SWAGGER_TAGS.SYNCHRONIZATION)
   getSyncStatus(@Query('key') key = 'consumption') {
     return this.metricsService.getSyncStatus(key);
   }
 
   @Get(':id')
+  @ApiTags(SWAGGER_TAGS.METRICS)
   getById(@Param('id') id: string) {
     return this.metricsService.findById(id);
   }
 
   @Post()
+  @ApiTags(SWAGGER_TAGS.METRICS)
   create(@Body() dto: CreateDailyMetricsDto) {
     return this.metricsService.create(dto);
   }
 
   @Post('upsert')
+  @ApiTags(SWAGGER_TAGS.METRICS)
   upsert(@Body() dto: CreateDailyMetricsDto & { date: string; campaignId: string; plataforma: string }) {
     return this.metricsService.upsertByDateAndCampaign(
       dto.date,
@@ -71,11 +82,13 @@ export class MetricsController {
   }
 
   @Post('sync/supermetrics/facebook-ads')
+  @ApiTags(SWAGGER_TAGS.SYNCHRONIZATION)
   async syncSupermetricsFacebookAds(@Query('date') date?: string) {
     return this.syncNativeAdsSource('meta', date ? 'daily' : 'monthly', date);
   }
 
   @Post('sync/supermetrics')
+  @ApiTags(SWAGGER_TAGS.SYNCHRONIZATION)
   async syncSupermetrics(
     @Query('source') source: SupermetricsSource | 'all' = 'all',
     @Query('scope') scope: SupermetricsScope = 'daily',
@@ -97,6 +110,7 @@ export class MetricsController {
   }
 
   @Post('sync/supermetrics/monthly-and-daily')
+  @ApiTags(SWAGGER_TAGS.SYNCHRONIZATION)
   async syncSupermetricsMonthlyAndDaily(
     @Query('source') source: SupermetricsSource | 'all' = 'all',
     @Query('date') date?: string
@@ -137,6 +151,7 @@ export class MetricsController {
   }
 
   @Post('sync/monthly-and-daily')
+  @ApiTags(SWAGGER_TAGS.SYNCHRONIZATION)
   async syncMonthlyAndDaily(
     @Query('source') source: AdsMetricsSource | 'all' = 'all',
     @Query('date') date?: string
@@ -145,6 +160,7 @@ export class MetricsController {
   }
 
   @Post('sync/date-range')
+  @ApiTags(SWAGGER_TAGS.SYNCHRONIZATION)
   async syncDateRange(
     @Query('source') source: AdsMetricsSource | 'all' = 'all',
     @Query('startDate') startDate: string,
@@ -154,6 +170,7 @@ export class MetricsController {
   }
 
   @Post('sync/date-range/start')
+  @ApiTags(SWAGGER_TAGS.SYNCHRONIZATION)
   async startDateRangeSync(
     @Query('source') source: AdsMetricsSource | 'all' = 'all',
     @Query('startDate') startDate: string,
@@ -308,11 +325,13 @@ export class MetricsController {
   }
 
   @Put(':id')
+  @ApiTags(SWAGGER_TAGS.METRICS)
   update(@Param('id') id: string, @Body() dto: UpdateDailyMetricsDto) {
     return this.metricsService.update(id, dto);
   }
 
   @Delete(':id')
+  @ApiTags(SWAGGER_TAGS.METRICS)
   delete(@Param('id') id: string) {
     const deleted = this.metricsService.delete(id);
     return { deleted };

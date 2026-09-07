@@ -1,7 +1,10 @@
 import { Controller, Get, Post, Put, Delete, Param, Body } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import { SWAGGER_TAGS } from '../../common/swagger/swagger-tags';
 import { ControlService } from './control.service';
 import { CreateMonthlyControlDto, UpdateMonthlyControlDto } from './dto/create-monthly-control.dto';
 
+@ApiTags(SWAGGER_TAGS.CONTROL)
 @Controller('control')
 export class ControlController {
   constructor(private readonly controlService: ControlService) {}

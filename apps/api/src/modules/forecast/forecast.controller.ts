@@ -1,7 +1,10 @@
 import { Controller, Get, Post, Put, Delete, Param, Body } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import { SWAGGER_TAGS } from '../../common/swagger/swagger-tags';
 import { ForecastService } from './forecast.service';
 import { CreateForecastDetailDto, UpdateForecastDetailDto } from './dto/create-forecast-detail.dto';
 
+@ApiTags(SWAGGER_TAGS.FORECAST)
 @Controller('forecast')
 export class ForecastController {
   constructor(private readonly forecastService: ForecastService) {}

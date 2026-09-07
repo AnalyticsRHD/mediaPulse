@@ -1,9 +1,11 @@
 import { BadRequestException, Body, Controller, Delete, Get, Headers, Logger, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { InvestmentsService } from './investments.service';
 import { ManualInvestmentDto } from './dto/manual-investment.dto';
 import { AuthService } from '../auth/auth.service';
 import { ExternalApisService } from '../../common/external-apis/external-apis.service';
 import { CreditAllocationsRepository } from './credit-allocations.repository';
+import { SWAGGER_TAGS } from '../../common/swagger/swagger-tags';
 
 @Controller('investments')
 export class InvestmentsController {
@@ -20,6 +22,7 @@ export class InvestmentsController {
   ) {}
 
   @Get('management/credit-allocations')
+  @ApiTags(SWAGGER_TAGS.CREDIT_ALLOC)
   async getCreditAllocations(
     @Headers('authorization') authorization?: string,
     @Query('page') pageValue?: string,
@@ -36,6 +39,7 @@ export class InvestmentsController {
   }
 
   @Get('management/credit-allocations/sync-status')
+  @ApiTags(SWAGGER_TAGS.CREDIT_ALLOC)
   async getCreditAllocationSyncStatus(@Headers('authorization') authorization?: string) {
     await this.authService.requireAdmin(authorization);
     const persistedFinishedAt = await this.creditAllocationsRepository.getLastSyncedAt();
@@ -47,6 +51,7 @@ export class InvestmentsController {
   }
 
   @Post('management/credit-allocations/sync')
+  @ApiTags(SWAGGER_TAGS.CREDIT_ALLOC)
   async syncCreditAllocations(
     @Headers('authorization') authorization?: string,
     @Query('page') pageValue?: string,
@@ -86,6 +91,7 @@ export class InvestmentsController {
   }
 
   @Patch('management/credit-allocations/:platform/:accountId/date')
+  @ApiTags(SWAGGER_TAGS.CREDIT_ALLOC)
   async updateCreditAllocationDate(
     @Param('platform') platform: string,
     @Param('accountId') accountId: string,
@@ -103,23 +109,29 @@ export class InvestmentsController {
   }
 
   @Get()
+  @ApiTags(SWAGGER_TAGS.INVESTMENTS)
   getInvestments(
     @Query('mes') mes?: string,
     @Query('date') date?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('includeDrafts') includeDrafts?: string,
-    @Query('mode') mode?: 'thisMonth' | 'today' | 'yesterday' | 'previousMonth' | 'custom'
+    @Query('mode') mode?: 'thisMonth' | 'today' | 'yesterday' | 'previousMonth' | 'custom',
+    @Headers('authorization') authorization?: string
   ) {
-    return this.investmentsService.findAll(mes, date, startDate, endDate, includeDrafts === 'true', mode);
+    return this.authService.requireUser(authorization).then((user) => (
+      this.investmentsService.findAll(mes, date, startDate, endDate, includeDrafts === 'true', mode, false, user)
+    ));
   }
 
   @Get('manual')
-  getManualLines(@Query('mes') mes?: string) {
-    return this.investmentsService.getManualLines(mes);
+  @ApiTags(SWAGGER_TAGS.MANUAL_ENTRY)
+  getManualLines(@Query('mes') mes?: string, @Headers('authorization') authorization?: string) {
+    return this.authService.requireUser(authorization).then((user) => this.investmentsService.getManualLines(mes, user));
   }
 
   @Get('manual/:id/history')
+  @ApiTags(SWAGGER_TAGS.MANUAL_ENTRY)
   async getManualLineHistory(@Param('id') id: string, @Headers('authorization') authorization?: string) {
     await this.authService.requireUser(authorization);
     const history = await this.investmentsService.getManualLineHistory(id);
@@ -128,6 +140,7 @@ export class InvestmentsController {
   }
 
   @Post('manual/:id/deviation-comments')
+  @ApiTags(SWAGGER_TAGS.MANUAL_ENTRY)
   async addDeviationComment(
     @Param('id') id: string,
     @Body('comment') comment: string,
@@ -140,12 +153,14 @@ export class InvestmentsController {
   }
 
   @Post('manual')
+  @ApiTags(SWAGGER_TAGS.MANUAL_ENTRY)
   async createManualLine(@Body() dto: ManualInvestmentDto, @Headers('authorization') authorization?: string) {
     const user = await this.authService.requireManualEditor(authorization);
     return this.investmentsService.createManualLine(dto, user);
   }
 
   @Patch('manual/:id/presupuesto')
+  @ApiTags(SWAGGER_TAGS.MANUAL_ENTRY)
   async updateManualBudget(@Param('id') id: string, @Body('presupuesto') presupuesto: number, @Headers('authorization') authorization?: string) {
     const user = await this.authService.requireManualEditor(authorization);
     const updated = await this.investmentsService.updateManualBudget(id, presupuesto, user);
@@ -154,6 +169,7 @@ export class InvestmentsController {
   }
 
   @Patch('manual/:id')
+  @ApiTags(SWAGGER_TAGS.MANUAL_ENTRY)
   async updateManualLine(@Param('id') id: string, @Body() dto: Partial<ManualInvestmentDto>, @Headers('authorization') authorization?: string) {
     const user = await this.authService.requireManualEditor(authorization);
     const updated = await this.investmentsService.updateManualLine(id, dto, user);
@@ -162,6 +178,7 @@ export class InvestmentsController {
   }
 
   @Delete('manual')
+  @ApiTags(SWAGGER_TAGS.MANUAL_ENTRY)
   async deleteManualLines(@Body('ids') ids: string[], @Headers('authorization') authorization?: string) {
     if (!Array.isArray(ids) || ids.length === 0) {
       throw new BadRequestException('ids must be a non-empty array');

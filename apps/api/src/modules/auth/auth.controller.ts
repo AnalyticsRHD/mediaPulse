@@ -1,10 +1,18 @@
-import { Body, Controller, Get, Headers, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Req,
+  UseGuards
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { SWAGGER_TAGS } from '../../common/swagger/swagger-tags';
 import { AuthService } from './auth.service';
-import { CreateUserDto } from './dto/create-user.dto';
 import { LoginDto } from './dto/login.dto';
+import { AuthenticatedRequest, JwtAuthGuard } from './guards/jwt-auth.guard';
 
-@ApiTags('auth')
+@ApiTags(SWAGGER_TAGS.AUTH)
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -18,12 +26,8 @@ export class AuthController {
   @Get('me')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Obtener usuario autenticado' })
-  me(@Headers('authorization') authorization?: string) {
-    return this.authService.requireUser(authorization);
-  }
-
-  @Post('users')
-  createUser(@Body() dto: CreateUserDto, ) {
-    return this.authService.createUser(dto);
+  @UseGuards(JwtAuthGuard)
+  me(@Req() request: AuthenticatedRequest) {
+    return request.user;
   }
 }

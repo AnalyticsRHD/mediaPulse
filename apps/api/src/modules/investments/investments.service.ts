@@ -32,7 +32,8 @@ export class InvestmentsService {
     endDate = date,
     includeDrafts = false,
     mode: InvestmentRangeMode = 'thisMonth',
-    persistSnapshots = false
+    persistSnapshots = false,
+    user?: AuthUser
   ): Promise<InvestmentsResponse> {
     await this.hydrateManualLines();
     const safeStartDate = this.ensureDate(startDate, 'startDate');
@@ -53,9 +54,11 @@ export class InvestmentsService {
       ? this.getRangeDayEquivalents(resolvedMes, rangeStartDate, rangeEndDate, rangeMode) / days
       : 0;
     const latestConsumptionUpdatedAt = await this.getLatestConsumptionUpdatedAt();
+    const suspendedKeys = user?.role === 'ADMIN' ? new Set<string>() : await this.brandMappingService.getSuspendedKeys();
     const lines = Array.from(this.manualLines.values())
       .filter((line) => line.mes === resolvedMes)
       .filter((line) => includeDrafts || line.status === InvestmentStatus.PRESUPUESTO_OK)
+      .filter((line) => user?.role === 'ADMIN' || !suspendedKeys.has(this.mappingKey(line.anunciante, line.marca)))
       .sort((a, b) => this.sortManualLines(a, b));
     const latestDeviationComments = await this.manualInvestmentsRepository
       .findLatestDeviationCommentsByLineIds(lines.map((line) => line.id))
@@ -192,11 +195,17 @@ export class InvestmentsService {
     return updated;
   }
 
-  async getManualLines(mes?: string): Promise<ManualInvestmentLine[]> {
+  async getManualLines(mes?: string, user?: AuthUser): Promise<ManualInvestmentLine[]> {
     await this.hydrateManualLines();
     const lines = Array.from(this.manualLines.values());
-    const filtered = mes ? lines.filter((line) => line.mes === mes) : lines;
+    const suspendedKeys = user?.role === 'ADMIN' ? new Set<string>() : await this.brandMappingService.getSuspendedKeys();
+    const filtered = (mes ? lines.filter((line) => line.mes === mes) : lines)
+      .filter((line) => user?.role === 'ADMIN' || !suspendedKeys.has(this.mappingKey(line.anunciante, line.marca)));
     return filtered.sort((a, b) => this.sortManualLines(a, b));
+  }
+
+  private mappingKey(cliente: string, marca?: string): string {
+    return `${this.brandMappingService.normalize(cliente)}\u0000${this.brandMappingService.normalize(marca || '')}`;
   }
 
   async getManualLineHistory(id: string): Promise<ManualInvestmentLog[] | null> {
@@ -490,27 +499,7 @@ export class InvestmentsService {
     const matched = metrics.filter((metric) => this.metricMatchesLine(line, metric));
     if (matched.length > 0) return matched;
 
-    if (this.requiresExactMetaAdSetMatch(line)) {
-      const fuzzyMatches = metrics.filter((metric) => this.metaCampaignMatchesMetric(this.cleanOptionalText(line.campana) || '', metric));
-
-      // Debugging: when the client is RHD, log candidate metrics for investigation
-      try {
-        const normalizedClient = this.normalizeReference(line.anunciante);
-        if (normalizedClient === 'rhd') {
-          const candidateSummaries = metrics.map((m) => ({ adSetName: m.adSetName, campaignName: m.campaignName, campaignId: m.campaignId, spend: m.spend }));
-          // eslint-disable-next-line no-console
-          console.log('DEBUG RHD metric candidates for', line.campana, '=>', JSON.stringify(candidateSummaries));
-          const fuzzySummaries = fuzzyMatches.map((m) => ({ adSetName: m.adSetName, campaignName: m.campaignName, campaignId: m.campaignId, spend: m.spend }));
-          // eslint-disable-next-line no-console
-          console.log('DEBUG RHD fuzzy matches =>', JSON.stringify(fuzzySummaries));
-        }
-      } catch (e) {
-        // ignore debug errors
-      }
-
-      if (fuzzyMatches.length === 1) return fuzzyMatches;
-      return [];
-    }
+    if (this.requiresExactMetaAdSetMatch(line)) return [];
 
     return allowSingleCandidateFallback && metrics.length === 1 ? metrics : matched;
   }
@@ -644,42 +633,6 @@ export class InvestmentsService {
 
     return this.getCampaignMatchFields(line, metric)
       .some((value) => this.compactText(value || '').includes(needle));
-  }
-
-  private metaCampaignMatchesMetric(
-    needle: string,
-    metric: { campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string }
-  ): boolean {
-    const normalizedNeedle = this.normalizeMetaMatchText(needle);
-    if (!normalizedNeedle) return false;
-
-    const candidates = [metric.adSetName, metric.campaignName, metric.adGroupName, metric.campaignId]
-      .filter((value): value is string => Boolean(value));
-
-    return candidates.some((value) => {
-      const normalizedCandidate = this.normalizeMetaMatchText(String(value));
-      if (!normalizedCandidate) return false;
-      if (normalizedCandidate === normalizedNeedle) return true;
-      if (normalizedCandidate.includes(normalizedNeedle) || normalizedNeedle.includes(normalizedCandidate)) {
-        return normalizedCandidate.length > 3 && normalizedNeedle.length > 3;
-      }
-
-      const needleTokens = normalizedNeedle.split(' ').filter(Boolean);
-      const candidateTokens = normalizedCandidate.split(' ').filter(Boolean);
-      const overlap = needleTokens.filter((token) => candidateTokens.includes(token));
-      return overlap.length >= 1 && overlap.length >= Math.min(2, Math.min(needleTokens.length, candidateTokens.length));
-    });
-  }
-
-  private normalizeMetaMatchText(value: string): string {
-    return String(value)
-      .toLowerCase()
-      .replace(/[_\-/]+/g, ' ')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim()
-      .split(/\s+/)
-      .filter((token) => !['rhd', 'gestion', 'managed', 'data', 'co', 'ads', 'meta', 'facebook', 'account', 'campaign', 'campana', 'adset', 'adgroup', 'marketing'].includes(token))
-      .join(' ');
   }
 
   private getCampaignMatchFields(line: ManualInvestmentLine, metric: { campaignName?: string; campaignId?: string; adSetName?: string; adGroupName?: string }): Array<string | undefined> {

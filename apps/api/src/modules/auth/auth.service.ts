@@ -1,11 +1,20 @@
-import { ConflictException, ForbiddenException, Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+  UnauthorizedException
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { createHash, timingSafeEqual } from 'crypto';
-import jwt, { SignOptions } from 'jsonwebtoken';
-import { ConfigService } from '../../config/config.service';
 import { MetricsService } from '../metrics/metrics.service';
-import { AuthRepository } from './auth.repository';
-import { AuthUser } from './auth.types';
+import { AuthRepository, LastAdminConflictError } from './auth.repository';
+import { AuthUser, UserRole } from './auth.types';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
 type JwtPayload = {
   sub: string;
@@ -20,7 +29,7 @@ export class AuthService {
 
   constructor(
     private readonly authRepository: AuthRepository,
-    private readonly configService: ConfigService,
+    private readonly jwtService: JwtService,
     private readonly metricsService: MetricsService
   ) {}
 
@@ -50,7 +59,7 @@ export class AuthService {
     if (!token) return null;
 
     try {
-      const payload = jwt.verify(token, this.configService.jwtSecret) as JwtPayload;
+      const payload = await this.jwtService.verifyAsync<JwtPayload>(token);
       if (!payload.sub) return null;
 
       return this.authRepository.findUserById(payload.sub);
@@ -83,8 +92,15 @@ export class AuthService {
     return user;
   }
 
-  async createUser(dto: CreateUserDto, authorization?: string): Promise<AuthUser> {
-    const usersCount = await this.authRepository.countActiveUsers();
+  async getUsers(): Promise<AuthUser[]> {
+    try {
+      return await this.authRepository.findAllActiveUsers();
+    } catch {
+      throw new ServiceUnavailableException('No se pudieron obtener los usuarios');
+    }
+  }
+
+  async createUser(dto: CreateUserDto): Promise<AuthUser> {
     try {
       return await this.authRepository.createUser({
         name: dto.name.trim(),
@@ -92,10 +108,95 @@ export class AuthService {
         passwordHash: this.sha256(dto.password),
         role: dto.role
       });
-    } catch (error: any) {
-      if (error?.code === '23505') throw new ConflictException('El email ya existe');
+    } catch (error: unknown) {
+      if (this.isDatabaseError(error, '23505')) throw new ConflictException('El email ya existe');
       throw new ServiceUnavailableException('No se pudo crear el usuario');
     }
+  }
+
+  async updateUser(id: string, dto: UpdateUserDto): Promise<AuthUser> {
+    if (
+      dto.name === undefined
+      && dto.email === undefined
+      && dto.password === undefined
+      && dto.role === undefined
+    ) {
+      throw new BadRequestException('Debe enviar al menos name, email, password o role');
+    }
+
+    const name = dto.name?.trim();
+    if (dto.name !== undefined && !name) {
+      throw new BadRequestException('El nombre no puede estar vacio');
+    }
+
+    if (dto.role !== undefined && dto.role !== UserRole.ADMIN) {
+      let target: AuthUser | null;
+      let activeAdmins = 0;
+
+      try {
+        target = await this.authRepository.findUserById(id);
+        if (target?.role === UserRole.ADMIN) {
+          activeAdmins = await this.authRepository.countActiveAdmins();
+        }
+      } catch {
+        throw new ServiceUnavailableException('No se pudo actualizar el usuario');
+      }
+
+      if (!target) throw new NotFoundException('Usuario no encontrado');
+      if (target.role === UserRole.ADMIN && activeAdmins <= 1) {
+        throw new ConflictException('No se puede cambiar el rol del ultimo usuario ADMIN');
+      }
+    }
+
+    let updated: AuthUser | null;
+    try {
+      updated = await this.authRepository.updateUser(id, {
+        name,
+        email: dto.email?.trim(),
+        passwordHash: dto.password === undefined ? undefined : this.sha256(dto.password),
+        role: dto.role
+      });
+    } catch (error: unknown) {
+      if (error instanceof LastAdminConflictError) {
+        throw new ConflictException('No se puede cambiar el rol del ultimo usuario ADMIN');
+      }
+      if (this.isDatabaseError(error, '23505')) throw new ConflictException('El email ya existe');
+      throw new ServiceUnavailableException('No se pudo actualizar el usuario');
+    }
+
+    if (!updated) throw new NotFoundException('Usuario no encontrado');
+    return updated;
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    let target: AuthUser | null;
+    let activeAdmins = 0;
+
+    try {
+      target = await this.authRepository.findUserById(id);
+      if (target?.role === 'ADMIN') {
+        activeAdmins = await this.authRepository.countActiveAdmins();
+      }
+    } catch {
+      throw new ServiceUnavailableException('No se pudo eliminar el usuario');
+    }
+
+    if (!target) throw new NotFoundException('Usuario no encontrado');
+    if (target.role === 'ADMIN' && activeAdmins <= 1) {
+      throw new ConflictException('No se puede eliminar el ultimo usuario ADMIN');
+    }
+
+    let deleted: AuthUser | null;
+    try {
+      deleted = await this.authRepository.softDeleteUser(id);
+    } catch (error: unknown) {
+      if (error instanceof LastAdminConflictError) {
+        throw new ConflictException('No se puede eliminar el ultimo usuario ADMIN');
+      }
+      throw new ServiceUnavailableException('No se pudo eliminar el usuario');
+    }
+
+    if (!deleted) throw new NotFoundException('Usuario no encontrado');
   }
 
   private extractBearerToken(authorization?: string): string {
@@ -105,17 +206,13 @@ export class AuthService {
   }
 
   private signToken(user: AuthUser): string {
-    return jwt.sign(
+    return this.jwtService.sign(
       {
         name: user.name,
         email: user.email,
         role: user.role
       },
-      this.configService.jwtSecret,
-      {
-        subject: user.id,
-        expiresIn: this.configService.jwtExpiresIn as SignOptions['expiresIn']
-      }
+      { subject: user.id }
     );
   }
 
@@ -147,5 +244,12 @@ export class AuthService {
 
   private sha256(value: string): string {
     return createHash('sha256').update(value).digest('hex');
+  }
+
+  private isDatabaseError(error: unknown, code: string): boolean {
+    return typeof error === 'object'
+      && error !== null
+      && 'code' in error
+      && (error as { code?: unknown }).code === code;
   }
 }

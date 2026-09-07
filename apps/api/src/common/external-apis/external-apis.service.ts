@@ -5,6 +5,12 @@ import path from 'path';
 import { ConfigService } from '../../config/config.service';
 import { DailyMetrics } from '@mediapulse/shared';
 import { BrandMappingService } from '../brand-mapping/brand-mapping.service';
+import {
+  AdvertisingPlatform,
+  ApiAccount,
+  BrandMapping,
+  BrandPlatformAccount
+} from '../brand-mapping/brand-mapping.types';
 import { MercadoLibreOAuthRepository } from './mercado-libre-oauth.repository';
 
 const OPERATIONAL_TIME_ZONE = 'America/Argentina/Buenos_Aires';
@@ -35,6 +41,13 @@ type MercadoLibreAdvertiserConfig = {
   id: string;
   accountName?: string;
   referencia?: string;
+};
+
+type ManagedPlatformAccounts = {
+  ids: string[];
+  mappings: Map<string, BrandMapping>;
+  stored: ApiAccount[];
+  usingLegacyFallback: boolean;
 };
 
 type MercadoLibreWebMetricRow = {
@@ -176,7 +189,11 @@ export class ExternalApisService {
 
   async fetchMetaAdsMetrics(scope: SupermetricsScope, date = this.today(), rangeStartDate?: string): Promise<DailyMetrics[]> {
     const accessToken = this.configService.metaAccessToken;
-    const accountIds = this.configService.metaAccountIds;
+    const accountConfig = await this.loadManagedPlatformAccounts(
+      AdvertisingPlatform.META,
+      this.configService.metaAccountIds
+    );
+    const accountIds = accountConfig.ids;
 
     if (!accessToken || accountIds.length === 0) {
       this.warnMissingConfig('meta-marketing-api', 'Meta access token or ad account ids not configured.');
@@ -224,7 +241,10 @@ export class ExternalApisService {
         fetchedRows += rows.length;
         for (const row of rows) {
           const accountName = String(row.account_name || row.accountName || '');
-          if (accountName && !this.isManagedAdsAccount(accountName)) {
+          const isConfiguredManagedAccount = accountConfig.mappings.has(
+            this.normalizeManagedAccountId(AdvertisingPlatform.META, accountId)
+          );
+          if (accountName && !isConfiguredManagedAccount && !this.isManagedAdsAccount(accountName)) {
             filteredRows += 1;
             continue;
           }
@@ -271,7 +291,8 @@ export class ExternalApisService {
 
     for (const item of aggregated.values()) {
       const referencia = this.inferReference(item.accountName) || item.accountName;
-      let mapping = await this.brandMappingService.resolve(referencia);
+      let mapping = accountConfig.mappings.get(this.normalizeManagedAccountId(AdvertisingPlatform.META, item.accountId))
+        || await this.brandMappingService.resolve(referencia);
       // Fallback: some Meta accounts include RHD in the account name (e.g. RED_HOOK_DATA_RHD_GESTION_CO)
       // brandMapping.resolve may return 'SIN MAPEO' for the cleaned reference. If account name
       // contains RHD or RED_HOOK, map it to the RHD client so metrics match manual lines.
@@ -1102,7 +1123,11 @@ export class ExternalApisService {
   }
 
   async fetchGoogleAdsMetrics(scope: SupermetricsScope, date = this.today(), rangeStartDate?: string): Promise<DailyMetrics[]> {
-    const customerIds = this.configService.googleAdsCustomerIds;
+    const accountConfig = await this.loadManagedPlatformAccounts(
+      AdvertisingPlatform.GOOGLE,
+      this.configService.googleAdsCustomerIds
+    );
+    const customerIds = accountConfig.ids;
 
     if (
       !this.configService.googleAdsDeveloperToken
@@ -1159,7 +1184,10 @@ export class ExternalApisService {
       const customerId = String(row.__customerId || customer.id || '');
       const accountName = String(customer.descriptiveName || customer.descriptive_name || '');
 
-      if (!this.compactText(accountName).includes('managed')) continue;
+      const isConfiguredManagedAccount = accountConfig.mappings.has(
+        this.normalizeManagedAccountId(AdvertisingPlatform.GOOGLE, customerId)
+      );
+      if (!isConfiguredManagedAccount && !this.compactText(accountName).includes('managed')) continue;
 
       const spend = Number(rawMetrics.costMicros || rawMetrics.cost_micros || 0) / 1_000_000;
       if (!spend) continue;
@@ -1193,7 +1221,8 @@ export class ExternalApisService {
 
     for (const [index, item] of Array.from(aggregated.values()).entries()) {
       const referencia = this.inferReference(item.accountName) || item.accountName;
-      const mapping = await this.brandMappingService.resolve(referencia);
+      const mapping = accountConfig.mappings.get(this.normalizeManagedAccountId(AdvertisingPlatform.GOOGLE, item.customerId))
+        || await this.brandMappingService.resolve(referencia);
       const campaignId = [
         'Google',
         item.customerId,
@@ -1307,7 +1336,11 @@ export class ExternalApisService {
 
   async fetchTikTokMetrics(scope: SupermetricsScope, date = this.today(), rangeStartDate?: string): Promise<DailyMetrics[]> {
     const accessToken = this.configService.tiktokAccessToken;
-    const advertiserIds = this.configService.tiktokAdvertiserIds;
+    const accountConfig = await this.loadManagedPlatformAccounts(
+      AdvertisingPlatform.TIKTOK,
+      this.configService.tiktokAdvertiserIds
+    );
+    const advertiserIds = accountConfig.ids;
 
     if (!accessToken || advertiserIds.length === 0) {
       this.warnMissingConfig('tiktok', 'TikTok access token or advertiser ids not configured.');
@@ -1407,9 +1440,12 @@ export class ExternalApisService {
         const accountReference = this.inferReference(value.accountName) || value.accountName || value.advertiserId;
         const campaignReference = this.inferReference(value.campaignName) || value.campaignName || '';
         let referencia = accountReference;
-        let mapping = await this.brandMappingService.resolve(referencia);
+        const accountMapping = accountConfig.mappings.get(
+          this.normalizeManagedAccountId(AdvertisingPlatform.TIKTOK, value.advertiserId)
+        );
+        let mapping = accountMapping || await this.brandMappingService.resolve(referencia);
 
-        if (mapping.cliente === 'SIN MAPEO' && campaignReference) {
+        if (!accountMapping && mapping.cliente === 'SIN MAPEO' && campaignReference) {
           const campaignMapping = await this.brandMappingService.resolve(campaignReference);
           if (campaignMapping.cliente !== 'SIN MAPEO') {
             mapping = campaignMapping;
@@ -1466,7 +1502,14 @@ export class ExternalApisService {
     const cookie = this.configService.mercadoLibreWebCookie;
     const csrfToken = this.configService.mercadoLibreWebCsrfToken;
     const products = this.configService.mercadoLibreProducts;
-    const configuredAdvertisers = this.parseMercadoLibreAdvertisers(this.configService.mercadoLibreAdvertiserIds);
+    const accountConfig = await this.loadManagedPlatformAccounts(
+      AdvertisingPlatform.MERCADO_LIBRE,
+      this.configService.mercadoLibreAdvertiserIds.map((value) => value.split(':')[0] || '')
+    );
+    const configuredAdvertisers = this.mergeMercadoLibreAdvertisers(
+      this.parseMercadoLibreAdvertisers(this.configService.mercadoLibreAdvertiserIds),
+      accountConfig
+    );
     const accessToken = this.configService.mercadoLibreAccessToken;
 
     if (!cookie || !csrfToken || products.length === 0) return [];
@@ -1515,7 +1558,9 @@ export class ExternalApisService {
 
         const accountName = advertiser.accountName || advertiser.referencia || advertiser.id;
         const referencia = advertiser.referencia || accountName;
-        const mapping = await this.brandMappingService.resolve(referencia);
+        const mapping = accountConfig.mappings.get(
+          this.normalizeManagedAccountId(AdvertisingPlatform.MERCADO_LIBRE, advertiser.id)
+        ) || await this.brandMappingService.resolve(referencia);
         const metricDate = scope === 'monthly' ? this.monthStart(date) : date;
 
         out.push({
@@ -1710,7 +1755,14 @@ export class ExternalApisService {
   }
 
   private async fetchMercadoLibreApiMetrics(scope: SupermetricsScope, date = this.today(), rangeStartDate?: string): Promise<DailyMetrics[]> {
-    const configuredAdvertisers = this.parseMercadoLibreAdvertisers(this.configService.mercadoLibreAdvertiserIds);
+    const accountConfig = await this.loadManagedPlatformAccounts(
+      AdvertisingPlatform.MERCADO_LIBRE,
+      this.configService.mercadoLibreAdvertiserIds.map((value) => value.split(':')[0] || '')
+    );
+    const configuredAdvertisers = this.mergeMercadoLibreAdvertisers(
+      this.parseMercadoLibreAdvertisers(this.configService.mercadoLibreAdvertiserIds),
+      accountConfig
+    );
     const accessToken = await this.getMercadoLibreAccessToken();
 
     if (!accessToken) {
@@ -1811,7 +1863,9 @@ export class ExternalApisService {
 
       for (const [key, value] of aggregated.entries()) {
         const [metricDate] = key.split('||');
-        const mapping = await this.brandMappingService.resolve(value.referencia);
+        const mapping = accountConfig.mappings.get(
+          this.normalizeManagedAccountId(AdvertisingPlatform.MERCADO_LIBRE, value.advertiserId)
+        ) || await this.brandMappingService.resolve(value.referencia);
 
         out.push({
           date: metricDate,
@@ -1934,6 +1988,76 @@ export class ExternalApisService {
         };
       })
       .filter((value: MercadoLibreAdvertiserConfig | null): value is MercadoLibreAdvertiserConfig => Boolean(value));
+  }
+
+  private mergeMercadoLibreAdvertisers(
+    legacyAdvertisers: MercadoLibreAdvertiserConfig[],
+    accountConfig: ManagedPlatformAccounts
+  ): MercadoLibreAdvertiserConfig[] {
+    const merged = new Map<string, MercadoLibreAdvertiserConfig>();
+
+    if (accountConfig.usingLegacyFallback) {
+      for (const advertiser of legacyAdvertisers) {
+        const id = this.normalizeManagedAccountId(AdvertisingPlatform.MERCADO_LIBRE, advertiser.id);
+        if (id) merged.set(id, { ...advertiser, id });
+      }
+    }
+
+    for (const account of accountConfig.stored) {
+      const id = this.normalizeManagedAccountId(AdvertisingPlatform.MERCADO_LIBRE, account.accountId);
+      if (!id || merged.has(id)) continue;
+      merged.set(id, {
+        id,
+        accountName: account.accountName || account.id,
+        referencia: account.accountName || account.id
+      });
+    }
+
+    return Array.from(merged.values());
+  }
+
+  private async loadManagedPlatformAccounts(
+    platform: AdvertisingPlatform,
+    legacyIds: string[]
+  ): Promise<ManagedPlatformAccounts> {
+    let stored: ApiAccount[] = [];
+    let usingLegacyFallback = false;
+
+    try {
+      stored = await this.brandMappingService.getApiAccounts();
+      stored = stored.filter((account) => account.platform === platform && account.enabled);
+      if (stored.length === 0 && legacyIds.length > 0) {
+        usingLegacyFallback = true;
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.warnMissingConfig(
+        `brand-platform-accounts-${platform}`,
+        `Could not load managed ${platform} accounts from database; using legacy environment ids (${detail}).`
+      );
+      usingLegacyFallback = true;
+    }
+
+    const mappings = new Map<string, BrandMapping>();
+    const ids = new Set<string>();
+
+    for (const account of stored) {
+      const accountId = this.normalizeManagedAccountId(platform, account.accountId);
+      if (accountId) ids.add(accountId);
+    }
+
+    if (usingLegacyFallback) {
+      for (const legacyId of legacyIds) {
+        const accountId = this.normalizeManagedAccountId(platform, legacyId);
+        if (accountId) ids.add(accountId);
+      }
+    }
+
+    return { ids: Array.from(ids), mappings, stored, usingLegacyFallback };
+  }
+
+  private normalizeManagedAccountId(platform: AdvertisingPlatform, accountId: string): string {
+    return this.brandMappingService.normalizeAccountId(platform, accountId);
   }
 
   private async fetchMercadoLibreAdvertisers(accessToken: string): Promise<MercadoLibreAdvertiserConfig[]> {

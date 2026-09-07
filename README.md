@@ -120,6 +120,7 @@ La ejecución automática corre diariamente a las **10:15 ART** y recupera el ac
 | --- | --- |
 | `users` | Credenciales, identidad y rol |
 | `brand_mappings` | Relación entre nombres de cliente y marca |
+| `brand_platform_accounts` | Cuentas publicitarias asociadas a cada anunciante/marca |
 | `manual_investment_lines` | Presupuestos y datos planificados por mes |
 | `manual_investment_logs` | Auditoría de altas, cambios y bajas |
 | `manual_investment_deviation_comments` | Comentarios operativos de desvíos |
@@ -244,7 +245,9 @@ Las familias utilizadas son:
 - `SUPERMETRICS_*` para LinkedIn/Supermetrics;
 - `ADS_SHEETS_*`, `GOOGLE_SHEETS_API_KEY` y rangos `*_SHEETS_*` para Sheets.
 
-Los IDs múltiples se separan por coma. Los JSON de Supermetrics deben ser JSON válido en una sola línea.
+Los IDs de contenedores padre múltiples se separan por coma. Los IDs de cuentas
+hijas se administran en PostgreSQL mediante `/brand-mapping`. Los JSON de
+Supermetrics deben ser JSON válido en una sola línea.
 
 ## API
 
@@ -266,7 +269,48 @@ Las rutas protegidas reciben:
 Authorization: Bearer <token>
 ```
 
+### Endpoints de gestion administrativa
+
+Todos requieren un JWT cuyo usuario activo tenga rol `ADMIN`:
+
+| Metodo | Ruta | Uso |
+| --- | --- | --- |
+| `GET` | `/auth/users` | Listar usuarios activos para el panel de administracion |
+| `POST` | `/auth/users` | Crear un usuario; PostgreSQL genera su UUID |
+| `PUT` | `/auth/users/:id` | Editar uno o mas campos entre `name`, `email`, `password` y `role` (`ADMIN`, `MEDIA` o `CLIENT`) |
+| `DELETE` | `/auth/users/:id` | Eliminar logicamente un usuario por UUID |
+| `GET` | `/brand-mapping/management` | Listar anunciantes, marcas y cuentas asociadas |
+| `POST` | `/brand-mapping` | Crear/reutilizar un anunciante-marca y asociar cuentas publicitarias |
+
+Ejemplo de alta de anunciante, marca y cuentas:
+
+```json
+{
+  "cliente": "WORLD SPORT",
+  "marca": "Quiksilver",
+  "metaAccountId": "123456789",
+  "googleAccountId": "987-654-3210",
+  "tiktokAccountId": "700000000001",
+  "mercadoLibreAccountId": "12345"
+}
+```
+
+Para asociar mas de una cuenta de la misma plataforma también se puede enviar
+`accounts`, con elementos `{ "platform": "META|Google|TikTok|MELI", "accountId": "..." }`.
+
+Las cuentas hijas se guardan en PostgreSQL. Las credenciales y los identificadores
+padre (Business Manager, MCC/login customer y Business Center) permanecen en el
+entorno. Durante la carga inicial, las variables legacy de IDs hijos siguen siendo
+aceptadas como compatibilidad; al retirarlas, la base pasa a ser la unica fuente.
+
+Con `DB_SYNCHRONIZE=false`, aplicar sobre el esquema existente antes del despliegue
+`apps/api/migrations/20260903_admin_management.sql`.
+
+Una instalación nueva debe aprovisionar su primer `ADMIN` por un seed o una operación
+de base de datos controlada; el endpoint HTTP nunca habilita un bootstrap anónimo.
+
 Los DTO se validan globalmente: las propiedades desconocidas son rechazadas.
+El ultimo usuario activo con rol `ADMIN` no puede ser eliminado ni cambiado a otro rol.
 
 ## Despliegue
 
@@ -328,6 +372,7 @@ Los cambios en `.env` sólo son necesarios al incorporar o rotar credenciales/co
 ### Controles existentes
 
 - JWT firmado y expiración configurable;
+- guards de autenticación y autorización por rol para endpoints administrativos;
 - validación global de DTO;
 - edición manual restringida a `ADMIN` y `MEDIA`;
 - auditoría de cambios;
@@ -337,7 +382,6 @@ Los cambios en `.env` sólo son necesarios al incorporar o rotar credenciales/co
 ### Deuda técnica conocida de V1
 
 - las contraseñas usan SHA-256; migrar a Argon2 o bcrypt con salt;
-- `POST /auth/users` debe restringirse explícitamente a administradores;
 - CORS está abierto y debe limitarse a dominios permitidos;
 - faltan migraciones de base de datos versionadas;
 - faltan suites automatizadas unitarias, de integración y end-to-end;

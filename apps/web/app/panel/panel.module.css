@@ -1,0 +1,1083 @@
+.mainContent {
+  min-width: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 88% 2%, rgba(24, 68, 71, 0.045), transparent 25%),
+    #f7f9f8;
+  padding: 28px clamp(22px, 2.6vw, 42px) 48px;
+}
+
+.pageHeader {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(280px, 420px) minmax(180px, 1fr);
+  align-items: center;
+  gap: 24px;
+  margin: 0 auto 22px;
+}
+
+.pageHeader > div:first-child {
+  justify-self: start;
+}
+
+.pageHeader h1 {
+  margin: 2px 0 0;
+  color: #111a24;
+  font-size: clamp(25px, 2.1vw, 34px);
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #467174;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.searchBox {
+  grid-column: 2;
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #d8e0de;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 2px 6px rgba(15, 39, 42, 0.025);
+  padding: 0 14px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.searchBox:focus-within {
+  border-color: #4b8587;
+  box-shadow: 0 0 0 3px rgba(37, 112, 115, 0.12);
+}
+
+.searchBox svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: #6c7a84;
+  stroke-linecap: round;
+  stroke-width: 1.8;
+}
+
+.searchBox input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #172127;
+  font-size: 13px;
+}
+
+.searchBox input::placeholder {
+  color: #859096;
+}
+
+.primaryButton,
+.secondaryButton,
+.dangerButton,
+.refreshButton,
+.loadError button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  padding: 0 15px;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.primaryButton {
+  border: 1px solid #07565a;
+  background: linear-gradient(180deg, #076267 0%, #034b4f 100%);
+  box-shadow: 0 6px 14px rgba(4, 77, 81, 0.16);
+  color: #fff;
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: linear-gradient(180deg, #087075 0%, #05565a 100%);
+  box-shadow: 0 8px 18px rgba(4, 77, 81, 0.21);
+  transform: translateY(-1px);
+}
+
+.primaryButton > span {
+  font-size: 19px;
+  font-weight: 400;
+}
+
+.secondaryButton,
+.refreshButton,
+.loadError button {
+  border: 1px solid #bdcecc;
+  background: #fff;
+  color: #17575a;
+}
+
+.secondaryButton:hover:not(:disabled),
+.refreshButton:hover:not(:disabled),
+.loadError button:hover:not(:disabled) {
+  border-color: #6f9b9d;
+  background: #f5fbfa;
+}
+
+.dangerButton {
+  border: 1px solid #eb9a9a;
+  background: #fff;
+  color: #d63e3e;
+}
+
+.dangerButton:hover:not(:disabled) {
+  border-color: #db5555;
+  background: #fff7f7;
+}
+
+.dangerButton svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible,
+.dangerButton:focus-visible,
+.refreshButton:focus-visible,
+.iconButton:focus-visible,
+.loadError button:focus-visible,
+.authErrorCard button:focus-visible {
+  outline: 3px solid rgba(30, 116, 120, 0.24);
+  outline-offset: 2px;
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.dangerButton:disabled,
+.refreshButton:disabled,
+.iconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
+.usersGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(390px, 0.95fr);
+  align-items: stretch;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.card {
+  min-width: 0;
+  border: 1px solid #d7dfdd;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 4px 14px rgba(13, 45, 48, 0.035);
+  padding: 20px;
+}
+
+.sectionHeader {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  margin-bottom: 17px;
+}
+
+.userTabs {
+  display: flex;
+  gap: 4px;
+  margin: -4px 0 17px;
+  border-bottom: 1px solid #dbe4e1;
+}
+
+.userTabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #718084;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 850;
+  padding: 7px 9px 8px;
+}
+
+.userTabs button:hover {
+  color: #075b5f;
+}
+
+.userTabs .activeUserTab {
+  border-bottom-color: #075b5f;
+  color: #075b5f;
+}
+
+.emptyEditor {
+  margin: 8px 0 0;
+  border: 1px dashed #c8d6d3;
+  border-radius: 6px;
+  color: #718084;
+  font-size: 11px;
+  padding: 16px;
+  text-align: center;
+}
+
+.sectionHeader h2,
+.formHeading h3 {
+  margin: 0;
+  color: #152027;
+  letter-spacing: -0.018em;
+}
+
+.sectionHeader h2 {
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.sectionHeader p,
+.formHeading p {
+  margin: 4px 0 0;
+  color: #6e797e;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.sectionIcon {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  color: #075b5f;
+}
+
+.sectionIcon svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.refreshButton {
+  min-height: 32px;
+  font-size: 10px;
+  padding: 0 10px;
+}
+
+.tableScroller {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e0e6e4;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.dataTable {
+  width: 100%;
+  border-collapse: collapse;
+  color: #273238;
+  font-size: 11px;
+}
+
+.usersCard .dataTable {
+  min-width: 570px;
+}
+
+.relationshipsPanel .dataTable {
+  min-width: 660px;
+}
+
+.dataTable th,
+.dataTable td {
+  border-bottom: 1px solid #e4e9e7;
+  padding: 10px 11px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.dataTable th {
+  background: #f7f9f8;
+  color: #253036;
+  font-size: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.dataTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.dataTable tbody tr {
+  transition: background 130ms ease;
+}
+
+.dataTable tbody tr:hover {
+  background: #f7fbfa;
+}
+
+.dataTable tbody tr.selectedRow {
+  background: #edf7f6;
+  box-shadow: inset 3px 0 #16797c;
+}
+
+.actionsColumn {
+  width: 82px;
+  text-align: right !important;
+}
+
+.rowActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.iconButton {
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d5dddb;
+  border-radius: 6px;
+  background: #fff;
+  color: #526368;
+  cursor: pointer;
+  padding: 0;
+}
+
+.iconButton:hover {
+  border-color: #91acab;
+  background: #f4faf9;
+  color: #075b5f;
+}
+
+.iconButton svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.deleteIconButton {
+  border-color: #f0c1c1;
+  color: #dc4a4a;
+}
+
+.deleteIconButton:hover {
+  border-color: #e77979;
+  background: #fff6f6;
+  color: #cf3232;
+}
+
+.roleBadge,
+.platformBadge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 850;
+  line-height: 1;
+  padding: 5px 7px;
+  white-space: nowrap;
+}
+
+.roleADMIN {
+  background: #074f53;
+  color: #fff;
+}
+
+.roleMEDIA {
+  background: #e8edef;
+  color: #34444b;
+}
+
+.roleCLIENT {
+  background: #edf5f3;
+  color: #386362;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 850;
+  line-height: 1;
+  padding: 5px 7px;
+  white-space: nowrap;
+}
+
+.statusActive {
+  background: #edf5f3;
+  color: #28623a;
+}
+
+.statusSuspended {
+  background: #fff1e8;
+  color: #a33d1e;
+}
+
+.smallActionButton {
+  min-height: 28px;
+  border: 1px solid #bdcecc;
+  border-radius: 6px;
+  background: #fff;
+  color: #17575a;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 850;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.smallActionButton:hover {
+  border-color: #6f9b9d;
+  background: #f5fbfa;
+}
+
+.platformBadge {
+  background: #eef4f4;
+  color: #285b5e;
+}
+
+.accountIdCell {
+  color: #34454b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.mutedText {
+  color: #919a9e;
+  font-style: italic;
+}
+
+.emptyCell {
+  color: #778489;
+  padding: 25px 14px !important;
+  text-align: center !important;
+}
+
+.tableFooter {
+  margin: 11px 3px 0;
+  color: #758187;
+  font-size: 10px;
+}
+
+.form {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.twoFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field,
+.accountField {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  color: #283238;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.field span small {
+  color: #788388;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.field input,
+.field select,
+.accountField input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid #d4dcda;
+  border-radius: 6px;
+  outline: 0;
+  background: #fff;
+  color: #243137;
+  font-size: 11px;
+  padding: 0 11px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.field select {
+  cursor: pointer;
+}
+
+.field input:focus,
+.field select:focus,
+.accountField input:focus {
+  border-color: #468184;
+  box-shadow: 0 0 0 3px rgba(42, 116, 119, 0.11);
+}
+
+.field input:disabled,
+.field select:disabled,
+.accountField input:disabled {
+  cursor: not-allowed;
+  background: #f4f6f5;
+  color: #768085;
+}
+
+.field input::placeholder,
+.accountField input::placeholder {
+  color: #9aa2a6;
+}
+
+.formActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding-top: 2px;
+}
+
+.formActions .dangerButton {
+  margin-left: auto;
+}
+
+.notice,
+.loadError {
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.45;
+  padding: 10px 11px;
+}
+
+.noticeSuccess {
+  border-color: #b8dabe;
+  background: #f1faf2;
+  color: #28623a;
+}
+
+.noticeError {
+  border-color: #efb7b7;
+  background: #fff6f6;
+  color: #a93333;
+}
+
+.loadError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  border-color: #efb7b7;
+  background: #fff7f7;
+  color: #a93333;
+}
+
+.loadError button {
+  min-height: 29px;
+  flex: 0 0 auto;
+  border-color: #e2abab;
+  color: #a93333;
+  font-size: 9px;
+  padding: 0 9px;
+}
+
+.advertisersCard {
+  padding-bottom: 22px;
+}
+
+.advertisersCard + .advertisersCard {
+  margin-top: 16px;
+}
+
+.advertisersGrid {
+  display: grid;
+  grid-template-columns: minmax(370px, 0.9fr) minmax(0, 1.35fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.apiBatchForm {
+  margin-bottom: 18px;
+  border: 1px solid #dfe7e4;
+  border-radius: 7px;
+  background: #fbfdfc;
+  padding: 16px;
+}
+
+.accountIdsTextarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid #d4dcda;
+  border-radius: 6px;
+  outline: 0;
+  background: #fff;
+  color: #243137;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 10px 11px;
+}
+
+.accountIdsTextarea:focus {
+  border-color: #468184;
+  box-shadow: 0 0 0 3px rgba(42, 116, 119, 0.11);
+}
+
+.platformSelect {
+  position: relative;
+  width: 100%;
+}
+
+.platformSelectTrigger {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #d4dcda;
+  border-radius: 6px;
+  outline: 0;
+  background: #fff;
+  color: #243137;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 11px;
+  text-align: left;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.platformSelectTrigger:hover,
+.platformSelectOpen .platformSelectTrigger {
+  border-color: #468184;
+}
+
+.platformSelectTrigger:focus-visible {
+  border-color: #468184;
+  box-shadow: 0 0 0 3px rgba(42, 116, 119, 0.11);
+}
+
+.platformSelectArrow {
+  color: #17666a;
+  font-size: 9px;
+  transition: transform 150ms ease;
+}
+
+.platformSelectOpen .platformSelectArrow {
+  transform: rotate(180deg);
+}
+
+.platformSelectMenu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  display: grid;
+  max-height: 190px;
+  overflow-y: auto;
+  border: 1px solid #d4dcda;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(13, 45, 48, 0.14);
+  padding: 4px;
+}
+
+.platformSelectOption,
+.platformSelectOptionSelected {
+  min-height: 34px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #243137;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 9px;
+  text-align: left;
+}
+
+.platformSelectOption:hover,
+.platformSelectOptionSelected {
+  background: #eaf5f3;
+  color: #075b5f;
+  font-weight: 800;
+}
+
+.advertiserForm,
+.relationshipsPanel {
+  min-width: 0;
+  border: 1px solid #e0e6e4;
+  border-radius: 7px;
+  background: #fff;
+  padding: 15px;
+}
+
+.formHeading h3 {
+  font-size: 13px;
+}
+
+.accountsFieldset {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.accountsFieldset legend {
+  margin-bottom: 10px;
+  color: #283238;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.accountsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.accountField {
+  align-content: start;
+  border: 1px solid #e3e8e6;
+  border-radius: 7px;
+  background: #fbfcfc;
+  padding: 11px;
+}
+
+.accountField small {
+  min-height: 24px;
+  color: #7c878b;
+  font-size: 8px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.platformHeading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #202b31;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.platformMark {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: -0.02em;
+}
+
+.platformMETA {
+  background: #e9f2ff;
+  color: #0866ff;
+}
+
+.platformGoogle {
+  background: #fff5dd;
+  color: #ba7210;
+}
+
+.platformMELI {
+  background: #fff7b8;
+  color: #665700;
+}
+
+.platformTikTok {
+  background: #edf0f1;
+  color: #11181b;
+}
+
+.accountLabel {
+  color: #546167;
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.relationshipsPanel {
+  display: flex;
+  flex-direction: column;
+}
+
+.relationshipsPanel .formHeading {
+  margin-bottom: 13px;
+}
+
+.relationshipsScroller {
+  max-height: 426px;
+  overflow: auto;
+}
+
+.relationshipsScroller thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 25, 27, 0.56);
+  padding: 20px;
+}
+
+.confirmDialog {
+  width: min(430px, 100%);
+  border: 1px solid #e0e5e3;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(5, 24, 26, 0.28);
+  padding: 24px;
+  text-align: center;
+}
+
+.dialogIcon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 12px;
+  border-radius: 999px;
+  background: #fff0f0;
+  color: #d43d3d;
+}
+
+.dialogIcon svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.confirmDialog h2 {
+  margin: 0;
+  color: #172126;
+  font-size: 18px;
+}
+
+.confirmDialog p {
+  margin: 9px 0 21px;
+  color: #69767b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: center;
+  gap: 9px;
+}
+
+.authGate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(24, 68, 71, 0.08), transparent 28%),
+    linear-gradient(180deg, #f8faf9 0%, #e9eeee 100%);
+  padding: 24px;
+}
+
+.authErrorCard {
+  width: min(420px, 100%);
+  border: 1px solid #d7dfdd;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(11, 42, 45, 0.12);
+  padding: 27px;
+  text-align: center;
+}
+
+.authErrorMark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 12px;
+  border-radius: 999px;
+  background: #fff0f0;
+  color: #c83b3b;
+  font-size: 21px;
+  font-weight: 900;
+}
+
+.authErrorCard h1 {
+  margin: 0;
+  color: #172126;
+  font-size: 20px;
+}
+
+.authErrorCard p {
+  margin: 9px 0 18px;
+  color: #68757a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.authErrorCard button {
+  min-height: 40px;
+  border: 1px solid #07565a;
+  border-radius: 7px;
+  background: #075b5f;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 0 17px;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 1320px) {
+  .usersGrid,
+  .advertisersGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .usersGrid {
+    align-items: start;
+  }
+
+  .relationshipsScroller {
+    max-height: 480px;
+  }
+}
+
+@media (max-width: 980px) {
+  .mainContent {
+    min-height: calc(100vh - 58px);
+    padding: 20px 18px 38px;
+  }
+
+  .pageHeader {
+    grid-template-columns: minmax(160px, 1fr) minmax(260px, 380px) minmax(160px, 1fr);
+    gap: 13px;
+  }
+}
+
+@media (max-width: 760px) {
+  .pageHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .searchBox {
+    grid-column: 1;
+    grid-row: 2;
+    width: min(100%, 420px);
+    justify-self: center;
+  }
+
+  .card {
+    padding: 16px;
+  }
+
+  .twoFields,
+  .accountsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .accountField small {
+    min-height: 0;
+  }
+
+  .formActions .dangerButton {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .mainContent {
+    padding: 16px 10px 30px;
+  }
+
+  .pageHeader {
+    grid-template-columns: 1fr;
+    margin-bottom: 14px;
+  }
+
+  .searchBox {
+    width: 100%;
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .sectionHeader {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .sectionHeader .refreshButton {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .advertiserForm,
+  .relationshipsPanel {
+    padding: 12px;
+  }
+
+  .formActions,
+  .dialogActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .formActions button,
+  .dialogActions button {
+    width: 100%;
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primaryButton,
+  .secondaryButton,
+  .dangerButton,
+  .refreshButton,
+  .dataTable tbody tr {
+    transition: none;
+  }
+}

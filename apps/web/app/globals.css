@@ -812,7 +812,12 @@ table {
 
 .control-table th,
 .control-table td {
+  font-size: 12px;
+  padding: 7px 5px;
   text-align: center;
+}
+.control-table th {
+  font-size: 10px;
 }
 
 .control-table th:nth-child(-n + 5),
@@ -822,8 +827,26 @@ table {
 
 .control-table .campaign-column {
   box-sizing: border-box;
-  max-width: 170px;
-  width: 170px;
+  max-width: 135px;
+  width: 135px;
+}
+
+.control-table th:nth-child(11),
+.control-table td:nth-child(11) {
+  width: 50px;
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+.control-table th:last-child,
+.control-table td:last-child {
+  width: 42px;
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+.control-table .deviation-button {
+  min-height: 44px;
 }
 
 .control-table td.campaign-column {
@@ -902,7 +925,7 @@ th {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  z-index: 12;
+  z-index: 100;
   min-width: 180px;
   max-height: 240px;
   overflow-x: hidden;
@@ -2646,6 +2669,22 @@ tfoot td {
 
   .control-table {
     min-width: 1440px;
+  }
+}
+
+@media (min-width: 1101px) {
+  .control-table {
+    table-layout: fixed;
+  }
+
+  .control-table thead th {
+    overflow: visible;
+  }
+
+  .control-table th,
+  .control-table td {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 

@@ -5,6 +5,7 @@ import figlet from 'figlet';
 
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { SWAGGER_TAGS } from './common/swagger/swagger-tags';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -28,6 +29,30 @@ async function bootstrap() {
     )
     .setVersion('0.0.1')
     .addBearerAuth()
+    .addTag(SWAGGER_TAGS.SYSTEM, 'Estado y operación general de la API.')
+    .addTag(SWAGGER_TAGS.AUTH, 'Inicio de sesión y sesión autenticada.')
+    .addTag(SWAGGER_TAGS.USERS, 'Administración de usuarios y permisos.')
+    .addTag(
+      SWAGGER_TAGS.ADVERTISERS_AND_BRANDS,
+      'Administración de anunciantes, marcas y cuentas publicitarias.',
+    )
+    .addTag(
+      SWAGGER_TAGS.CREDIT_ALLOC,
+      'Gestión y sincronización de asignaciones de crédito.',
+    )
+    .addTag(SWAGGER_TAGS.INVESTMENTS, 'Consulta de inversiones publicitarias.')
+    .addTag(SWAGGER_TAGS.MANUAL_ENTRY, 'Carga y ajuste manual de inversiones.')
+    .addTag(SWAGGER_TAGS.METRICS, 'Consulta y administración de métricas.')
+    .addTag(
+      SWAGGER_TAGS.SYNCHRONIZATION,
+      'Procesos de sincronización e importación de datos.',
+    )
+    .addTag(SWAGGER_TAGS.FORECAST, 'Administración de proyecciones.')
+    .addTag(SWAGGER_TAGS.CONTROL, 'Control y seguimiento mensual.')
+    .addTag(
+      SWAGGER_TAGS.TIKTOK_INTEGRATION,
+      'Autorización e integración con TikTok Ads.',
+    )
     .build();
 
   const swaggerDocument = SwaggerModule.createDocument(

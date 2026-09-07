@@ -1,0 +1,433 @@
+.appFrame {
+  --sidebar-collapsed-width: 64px;
+  --sidebar-expanded-width: 224px;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: var(--sidebar-collapsed-width) minmax(0, 1fr);
+  background: var(--bg);
+  transition: grid-template-columns 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  min-width: 0;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at 12% 20%, rgba(51, 154, 158, 0.18), transparent 32%),
+    linear-gradient(180deg, #073f43 0%, #00494d 52%, #003d41 100%);
+  box-shadow: 8px 0 28px rgba(5, 49, 52, 0.08);
+  color: #fff;
+}
+
+.brandRow {
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 0 18px;
+}
+
+.brand {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.015em;
+  text-decoration: none;
+}
+
+.brand:focus-visible,
+.navigationLink:focus-visible,
+.logoutButton:focus-visible,
+.mobileMenuButton:focus-visible,
+.mobileCloseButton:focus-visible {
+  outline: 2px solid #8fe3df;
+  outline-offset: 3px;
+}
+
+.brandMark {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: block;
+  overflow: hidden;
+}
+
+.brandMarkImage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: auto;
+  max-width: none;
+  height: 30px;
+  display: block;
+}
+
+.navigation {
+  display: grid;
+  gap: 6px;
+  padding: 22px 10px;
+}
+
+.navigationLink {
+  position: relative;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+  border-radius: 7px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 13px;
+  text-decoration: none;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.navigationLink::before {
+  position: absolute;
+  inset: 7px auto 7px 0;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: #83ded9;
+  content: '';
+  opacity: 0;
+  transform: translateX(-3px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.navigationLink:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+.navigationLink.active {
+  background: linear-gradient(90deg, rgba(145, 226, 221, 0.24), rgba(255, 255, 255, 0.11));
+  color: #fff;
+}
+
+.navigationLink.active::before {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.icon {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.65;
+}
+
+.accountArea {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 14px 12px 18px;
+}
+
+.accountSummary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 10px;
+}
+
+.avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: linear-gradient(145deg, #78989a, #496f72);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.accountCopy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.accountCopy strong,
+.accountCopy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountCopy strong {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.accountCopy small {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 9px;
+}
+
+.logoutButton {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.logoutButton:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.content {
+  min-width: 0;
+  width: 100%;
+}
+
+.mobileMenuButton,
+.mobileCloseButton,
+.backdrop {
+  display: none;
+}
+
+.buttonIcon {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+@media (min-width: 981px) {
+  .appFrame:has(.sidebar:hover),
+  .appFrame:has(.sidebar:focus-within) {
+    grid-template-columns: var(--sidebar-expanded-width) minmax(0, 1fr);
+  }
+
+  .accountArea {
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .accountSummary {
+    justify-content: center;
+    gap: 0;
+  }
+
+  .logoutButton {
+    justify-content: center;
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .sidebar {
+    width: 100%;
+  }
+
+  .brandRow {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .brand {
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .brandLabel,
+  .navigationLabel,
+  .accountCopy,
+  .logoutLabel {
+    min-width: 0;
+    max-width: 0;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateX(-5px);
+    transition:
+      max-width 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 130ms ease,
+      transform 180ms ease;
+    white-space: nowrap;
+  }
+
+  .sidebar:hover .brandLabel,
+  .sidebar:focus-within .brandLabel {
+    max-width: 145px;
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .sidebar:hover .navigationLabel,
+  .sidebar:focus-within .navigationLabel,
+  .sidebar:hover .logoutLabel,
+  .sidebar:focus-within .logoutLabel {
+    max-width: 130px;
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .sidebar:hover .accountCopy,
+  .sidebar:focus-within .accountCopy {
+    max-width: 142px;
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .sidebar:hover .accountSummary,
+  .sidebar:focus-within .accountSummary {
+    justify-content: flex-start;
+    gap: 10px;
+  }
+
+  .navigationLink {
+    padding-right: 16px;
+    padding-left: 16px;
+    white-space: nowrap;
+  }
+
+  .accountArea {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .accountSummary {
+    padding: 8px;
+  }
+
+  .logoutButton {
+    min-width: 0;
+    justify-content: flex-start;
+    overflow: hidden;
+    padding-right: 16px;
+    padding-left: 16px;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 980px) {
+  .appFrame {
+    display: block;
+    transition: none;
+  }
+
+  .content {
+    padding-top: 58px;
+  }
+
+  .mobileMenuButton {
+    position: fixed;
+    top: 11px;
+    left: 12px;
+    z-index: 90;
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid rgba(24, 68, 71, 0.2);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 8px 22px rgba(16, 24, 32, 0.12);
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 900;
+    padding: 0 11px;
+  }
+
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 180;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: rgba(5, 20, 22, 0.52);
+    cursor: default;
+    padding: 0;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 200;
+    width: min(286px, 86vw);
+    height: 100vh;
+    height: 100dvh;
+    box-shadow: 18px 0 50px rgba(5, 20, 22, 0.3);
+    pointer-events: none;
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform 200ms ease, visibility 0s linear 200ms;
+  }
+
+  .sidebar.mobileOpen {
+    pointer-events: auto;
+    transform: translateX(0);
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  .mobileCloseButton {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    cursor: pointer;
+    padding: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .appFrame,
+  .sidebar,
+  .navigationLink,
+  .navigationLink::before,
+  .brandLabel,
+  .navigationLabel,
+  .accountCopy,
+  .logoutLabel {
+    transition: none;
+  }
+}

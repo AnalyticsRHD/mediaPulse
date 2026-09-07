@@ -3,6 +3,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
+import { AppSidebar, AppSidebarItem } from './AppSidebar';
 import { BrandLoader } from './BrandLoader';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
@@ -2104,7 +2105,25 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
 
   if (!authUser) return null;
 
+  const sidebarItem: AppSidebarItem = activeTab === 'manual'
+    ? 'forecast'
+    : activeTab === 'management'
+      ? 'credit-alloc'
+      : 'control';
+
   return (
+    <AppSidebar
+      activeItem={sidebarItem}
+      user={authUser}
+      onLogout={handleLogout}
+      onNavigate={(item) => {
+        if (item === 'panel') {
+          router.push('/panel');
+          return;
+        }
+        navigateToTab(item === 'forecast' ? 'manual' : item === 'credit-alloc' ? 'management' : 'control');
+      }}
+    >
     <main className="app-shell">
       {showLoadingOverlay && blockingLoaderVisible ? <BrandLoader /> : null}
       <header className="topbar">
@@ -2140,35 +2159,11 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
             <button className="sync-button" type="button" onClick={syncSupermetrics} disabled={syncRunning}>
               {syncRunning ? 'Sincronizando...' : 'Actualizar consumo'}
             </button>
-            <div className="user-pill">
-              <button type="button" onClick={handleLogout}>Salir</button>
-            </div>
             </div>
             <p className="last-sync">Ultima actualizacion: {formatLastUpdate(lastConsumptionSyncAt)}</p>
           </div>
         ) : null}
       </header>
-
-      <div className="navigation-row">
-        <nav className="tabs" aria-label="Vistas de inversiones">
-          <button className={activeTab === 'control' ? 'active' : ''} onClick={() => navigateToTab('control')}>
-            Control
-          </button>
-          <button className={activeTab === 'manual' ? 'active' : ''} onClick={() => navigateToTab('manual')}>
-           Forecast
-          </button>
-          {authUser.role === 'ADMIN' ? (
-            <button className={activeTab === 'management' ? 'active' : ''} onClick={() => navigateToTab('management')}>
-              CA
-            </button>
-          ) : null}
-        </nav>
-        {isManagementView ? (
-          <div className="user-pill navigation-logout">
-            <button type="button" onClick={handleLogout}>Salir</button>
-          </div>
-        ) : null}
-      </div>
 
       {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
 
@@ -2370,16 +2365,16 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
               <tbody>
                 {filteredControlLines.map((line) => (
                   <tr key={line.id}>
-                    <td>{line.anunciante}</td>
-                    <td>{line.marca ?? '-'}</td>
-                    <td><span className={`platform ${platformClassName(line.plataforma)}`}>{formatPlatformLabel(line.plataforma)}</span></td>
-                    <td>{line.objetivo}</td>
+                    <td title={line.anunciante}>{line.anunciante}</td>
+                    <td title={line.marca ?? undefined}>{line.marca ?? '-'}</td>
+                    <td title={formatPlatformLabel(line.plataforma)}><span className={`platform ${platformClassName(line.plataforma)}`}>{formatPlatformLabel(line.plataforma)}</span></td>
+                    <td title={line.objetivo}>{line.objetivo}</td>
                     <td className="campaign-column" title={line.campana || undefined}>{line.campana || '-'}</td>
-                    <td>{formatMoney(line.presupuesto, line.moneda)}</td>
-                    <td>{formatMoney(line.consumo, line.moneda)}</td>
-                    <td>{Math.round(line.porcentajeConsumo * 100)}%</td>
-                    <td className={line.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(line.consumoRestante, line.moneda)}</td>
-                    <td>{formatMoney(line.nuevoPresupuestoDiario, line.moneda)}</td>
+                    <td title={formatMoney(line.presupuesto, line.moneda)}>{formatMoney(line.presupuesto, line.moneda)}</td>
+                    <td title={formatMoney(line.consumo, line.moneda)}>{formatMoney(line.consumo, line.moneda)}</td>
+                    <td title={`${Math.round(line.porcentajeConsumo * 100)}%`}>{Math.round(line.porcentajeConsumo * 100)}%</td>
+                    <td title={formatMoney(line.consumoRestante, line.moneda)} className={line.consumoRestante < 0 ? 'negative' : ''}>{formatMoney(line.consumoRestante, line.moneda)}</td>
+                    <td title={formatMoney(line.nuevoPresupuestoDiario, line.moneda)}>{formatMoney(line.nuevoPresupuestoDiario, line.moneda)}</td>
                     <td
                       className={getDeviationClass(line.desvio)}
                       title={line.latestDeviationComment ? `${line.latestDeviationComment.comment}\n${line.latestDeviationComment.userName} - ${formatLastUpdate(line.latestDeviationComment.createdAt)}` : 'Sin observaciones'}
@@ -2395,12 +2390,12 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
                       </button>
                     </td>
                     {showYesterdayConsumption ? (
-                      <td>{formatMoney(line.consumoAyer, line.moneda)}</td>
+                      <td title={formatMoney(line.consumoAyer, line.moneda)}>{formatMoney(line.consumoAyer, line.moneda)}</td>
                     ) : null}
-                    <td>{formatMoney(line.consumoDia, line.moneda)}</td>
-                    <td>{formatMoney(line.costoPorResultado, line.moneda)}</td>
-                    <td>{integer.format(line.resultadosProyectados)}</td>
-                    <td>{formatMoney(line.fcProyectada, line.moneda)}</td>
+                    <td title={formatMoney(line.consumoDia, line.moneda)}>{formatMoney(line.consumoDia, line.moneda)}</td>
+                    <td title={formatMoney(line.costoPorResultado, line.moneda)}>{formatMoney(line.costoPorResultado, line.moneda)}</td>
+                    <td title={integer.format(line.resultadosProyectados)}>{integer.format(line.resultadosProyectados)}</td>
+                    <td title={formatMoney(line.fcProyectada, line.moneda)}>{formatMoney(line.fcProyectada, line.moneda)}</td>
                     <td className="actions-cell">
                       <button className="icon-button" type="button" onClick={() => openLineHistory(line)} aria-label="Ver historial de linea">
                         <EyeIcon />
@@ -3135,6 +3130,7 @@ export function InvestmentsApp({ initialTab }: { initialTab: InvestmentTab }) {
         </div>
       ) : null}
     </main>
+    </AppSidebar>
   );
 }
 
@@ -3500,6 +3496,7 @@ function FilterHeader({
       <div
         className={`filter-header ${value ? 'active' : ''}`}
         data-dropdown-root="true"
+        title={label}
         onKeyDown={handleTypeahead}
       >
         <span>{label}</span>
@@ -3565,6 +3562,7 @@ function SortHeader({
       <button
         className={`sort-header ${isActive ? 'active' : ''}`}
         type="button"
+        title={label}
         onClick={() => onChange(nextSort)}
         aria-label={`Ordenar ${label}`}
       >
@@ -3598,6 +3596,7 @@ function ManagementSortHeader({
       <button
         className={`sort-header ${isActive ? 'active' : ''}`}
         type="button"
+        title={label}
         onClick={() => onChange(nextSort)}
         aria-label={`Ordenar ${label}`}
       >

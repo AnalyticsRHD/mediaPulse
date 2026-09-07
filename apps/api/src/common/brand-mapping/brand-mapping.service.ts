@@ -1,10 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { BrandMappingRepository } from './brand-mapping.repository';
+import { CreateBrandMappingDto } from './dto/create-brand-mapping.dto';
+import {
+  AdvertisingPlatform,
+  BrandMapping,
+  BrandMappingWithAccounts,
+  BrandPlatformAccount,
+  ApiAccount
+} from './brand-mapping.types';
+import { CreateApiAccountDto, CreateApiAccountsBatchDto } from './dto/create-api-account.dto';
 
-export type BrandMapping = {
-  cliente: string;
-  marca: string;
-};
+export type { BrandMapping } from './brand-mapping.types';
 
 @Injectable()
 export class BrandMappingService {
@@ -45,12 +51,12 @@ export class BrandMappingService {
 
   async getAll(): Promise<BrandMapping[]> {
     await this.hydrateMappings();
-    return this.mappings;
+    return this.mappings.filter((item) => item.enabled !== false);
   }
 
   async getClients(): Promise<string[]> {
     await this.hydrateMappings();
-    return Array.from(new Set(this.mappings.map((item) => item.cliente))).sort();
+    return Array.from(new Set(this.mappings.filter((item) => item.enabled !== false).map((item) => item.cliente))).sort();
   }
 
   async getBrandsByClient(cliente: string): Promise<string[]> {
@@ -59,8 +65,151 @@ export class BrandMappingService {
 
     return this.mappings
       .filter((item) => this.normalize(item.cliente) === normalizedClient)
+      .filter((item) => item.enabled !== false)
       .map((item) => item.marca)
       .sort();
+  }
+
+  async getManagementMappings(): Promise<BrandMappingWithAccounts[]> {
+    await this.hydrateMappings();
+
+    try {
+      return await this.brandMappingRepository.findAllWithAccounts();
+    } catch {
+      throw new ServiceUnavailableException('No se pudieron obtener los anunciantes y sus cuentas');
+    }
+  }
+
+  async setSuspended(id: string, suspended: boolean): Promise<BrandMapping> {
+    const updated = await this.brandMappingRepository.setSuspended(id, suspended);
+    if (!updated) throw new BadRequestException('La relación de anunciante no existe');
+    this.mappingsHydrated = false;
+    return updated;
+  }
+
+  async getSuspendedKeys(): Promise<Set<string>> {
+    try {
+      const keys = await this.brandMappingRepository.findSuspendedKeys();
+      return new Set(Array.from(keys).map((key) => {
+        const [cliente, marca] = key.split('\u0000');
+        return `${this.normalize(cliente)}\u0000${this.normalize(marca)}`;
+      }));
+    } catch {
+      return new Set();
+    }
+  }
+
+  async create(dto: CreateBrandMappingDto): Promise<BrandMappingWithAccounts> {
+    const cliente = dto.cliente.trim();
+    const marca = dto.marca.trim();
+    if (!cliente || !marca) {
+      throw new BadRequestException('Anunciante y marca son obligatorios');
+    }
+
+    const submittedAccounts = [
+      ...(dto.accounts || []),
+      ...(dto.metaAccountId === undefined
+        ? []
+        : [{ platform: AdvertisingPlatform.META, accountId: dto.metaAccountId }]),
+      ...(dto.googleAccountId === undefined
+        ? []
+        : [{ platform: AdvertisingPlatform.GOOGLE, accountId: dto.googleAccountId }]),
+      ...(dto.mercadoLibreAccountId === undefined
+        ? []
+        : [{ platform: AdvertisingPlatform.MERCADO_LIBRE, accountId: dto.mercadoLibreAccountId }]),
+      ...(dto.tiktokAccountId === undefined
+        ? []
+        : [{ platform: AdvertisingPlatform.TIKTOK, accountId: dto.tiktokAccountId }])
+    ];
+    const uniqueAccounts = new Map<string, { platform: AdvertisingPlatform; accountId: string }>();
+    for (const account of submittedAccounts) {
+      const accountId = this.normalizeAccountId(account.platform, account.accountId);
+      if (!accountId) throw new BadRequestException('Cada accountId debe contener un valor valido');
+      if (!/^\d+$/.test(accountId)) {
+        throw new BadRequestException(`El accountId de ${account.platform} debe ser numerico`);
+      }
+      uniqueAccounts.set(`${account.platform}:${accountId}`, { platform: account.platform, accountId });
+    }
+
+    try {
+      const created = await this.brandMappingRepository.createWithAccounts({
+        cliente,
+        marca,
+        accounts: Array.from(uniqueAccounts.values())
+      });
+      this.mappingsHydrated = false;
+      return created;
+    } catch (error: any) {
+      if (error?.code === 'ACCOUNT_ALREADY_ASSIGNED' || error?.code === '23505') {
+        throw new ConflictException('Una de las cuentas ya esta asociada a otro anunciante o marca');
+      }
+      throw new ServiceUnavailableException('No se pudo guardar el anunciante y sus cuentas');
+    }
+  }
+
+  async getAccountsByPlatform(platform: AdvertisingPlatform): Promise<BrandPlatformAccount[]> {
+    return this.brandMappingRepository.findAccountsByPlatform(platform);
+  }
+
+  async getApiAccounts(): Promise<ApiAccount[]> {
+    return this.brandMappingRepository.findApiAccounts();
+  }
+
+  async createApiAccount(dto: CreateApiAccountDto): Promise<ApiAccount> {
+    const accountId = this.normalizeAccountId(dto.platform, dto.accountId);
+    if (!accountId || !/^\d+$/.test(accountId)) throw new BadRequestException('El accountId debe contener solamente dígitos');
+    try {
+      return await this.brandMappingRepository.createApiAccount({
+        platform: dto.platform,
+        accountId,
+        accountName: dto.accountName?.trim(),
+        enabled: dto.enabled !== false
+      });
+    } catch (error: any) {
+      if (error?.code === '23505') throw new ConflictException('La cuenta ya está configurada');
+      throw new ServiceUnavailableException('No se pudo guardar la cuenta');
+    }
+  }
+
+  async createApiAccounts(target: string, dto: CreateApiAccountsBatchDto): Promise<ApiAccount[]> {
+    const platform = this.resolveApiPlatform(target);
+    if (!Array.isArray(dto.accountId) || dto.accountId.length === 0) {
+      throw new BadRequestException('Debe enviar un array con al menos una cuenta');
+    }
+
+    const results: ApiAccount[] = [];
+    for (const accountId of dto.accountId) {
+      results.push(await this.createApiAccount({
+        platform,
+        accountId,
+        accountName: dto.accountName,
+        enabled: dto.enabled
+      }));
+    }
+    return results;
+  }
+
+  async updateApiAccount(id: string, dto: Partial<CreateApiAccountDto>): Promise<ApiAccount> {
+    const updated = await this.brandMappingRepository.updateApiAccount(id, { accountName: dto.accountName?.trim(), enabled: dto.enabled });
+    if (!updated) throw new BadRequestException('La cuenta no existe');
+    return updated;
+  }
+
+  async deleteApiAccount(id: string): Promise<void> {
+    if (!(await this.brandMappingRepository.deleteApiAccount(id))) throw new BadRequestException('La cuenta no existe');
+  }
+
+  private resolveApiPlatform(target: string): AdvertisingPlatform {
+    const normalized = this.normalize(target).replace(/[\s_-]+/g, '');
+    const platform = {
+      meta: AdvertisingPlatform.META,
+      google: AdvertisingPlatform.GOOGLE,
+      tiktok: AdvertisingPlatform.TIKTOK,
+      meli: AdvertisingPlatform.MERCADO_LIBRE,
+      mercadolibre: AdvertisingPlatform.MERCADO_LIBRE
+    }[normalized];
+    if (!platform) throw new BadRequestException('La plataforma debe ser meta, google, tiktok o mercado-libre');
+    return platform;
   }
 
   async resolveClientBrand(cliente: string, marca: string): Promise<BrandMapping> {
@@ -113,6 +262,13 @@ export class BrandMappingService {
       .toLowerCase();
   }
 
+  normalizeAccountId(platform: AdvertisingPlatform, value: string): string {
+    const clean = String(value || '').trim();
+    if (platform === AdvertisingPlatform.META) return clean.replace(/^act_/i, '').trim();
+    if (platform === AdvertisingPlatform.GOOGLE) return clean.replace(/-/g, '').trim();
+    return clean;
+  }
+
   private resolveAlias(normalizedReference: string): BrandMapping | null {
     if (normalizedReference.includes('regalando pasion')) {
       return { cliente: 'RP', marca: 'RP' };
@@ -137,7 +293,9 @@ export class BrandMappingService {
       await this.brandMappingRepository.seed(this.defaultMappings);
       const databaseMappings = await this.brandMappingRepository.findAll();
       if (databaseMappings.length > 0 || this.brandMappingRepository.enabled) {
-        this.mappings = databaseMappings.filter((mapping) => !this.isInactiveClient(mapping.cliente));
+        this.mappings = databaseMappings
+          .filter((mapping) => !this.isInactiveClient(mapping.cliente))
+          .map((mapping) => ({ ...mapping, enabled: mapping.enabled !== false }));
       }
     } catch {
       this.mappings = this.defaultMappings;
