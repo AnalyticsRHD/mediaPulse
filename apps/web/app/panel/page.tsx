@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AppSidebar } from '../components/AppSidebar';
 import { BrandLoader } from '../components/BrandLoader';
 import styles from './panel.module.css';
+import { DatabaseExport } from './DatabaseExport';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3333';
 const SESSION_STORAGE_KEY = 'mediapulse-auth';
@@ -732,6 +733,8 @@ export default function AdminPanelPage() {
           </label>
 
         </header>
+
+        <DatabaseExport token={authToken} userId={authUser.id} />
 
         <div className={styles.usersGrid}>
           <section className={`${styles.card} ${styles.usersCard}`} aria-labelledby="users-title">

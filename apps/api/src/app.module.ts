@@ -10,10 +10,12 @@ import { IngestionsSchedulerModule } from './common/ingestionsScheduler/ingestio
 import { InvestmentsModule } from './modules/investments/investments.module';
 import { BrandMappingModule } from './common/brand-mapping/brand-mapping.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 
 @Module({
   imports: [
     ConfigModule,
+    MaintenanceModule,
     AuthModule,
     BrandMappingModule,
     ExternalApisModule,

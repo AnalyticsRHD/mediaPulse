@@ -10,3 +10,8 @@ apps/api/data/mercado-libre-oauth.json
 # Local API/debug response dumps
 /*-response*.json
 /tmp_*.json
+
+# Generated spreadsheet previews, analysis JSON and private database backups
+/outputs/
+/backups/
+/apps/api/backups/

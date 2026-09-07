@@ -1,3 +1,22 @@
+.databaseExport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 24px;
+  padding: 20px;
+  margin-bottom: 22px;
+  border: 1px solid #d8e0de;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.databaseExport > div:first-child { flex: 1 1 340px; }
+.databaseExport h2 { margin: 0 0 6px; color: #172127; font-size: 16px; }
+.databaseExport p { margin: 0; font-size: 13px; line-height: 1.6; color: #53636c; }
+.exportActions { display: flex; flex-wrap: wrap; gap: 10px; }
+.databaseExport > p { flex-basis: 100%; }
+.databaseExport .exportMessage { color: #17575a; }
+
 .mainContent {
   min-width: 0;
   min-height: 100vh;
