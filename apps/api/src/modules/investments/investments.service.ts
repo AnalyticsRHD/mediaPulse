@@ -524,8 +524,13 @@ export class InvestmentsService {
         && metric.date.startsWith(line.mes)
         && (
           (this.normalizeReference(metric.cliente) === lineClient && this.normalizeReference(metric.marca) === lineBrand)
-          || this.normalizeReference(metric.referencia || '') === lineBrand
-          || this.normalizeReference(metric.referencia || '') === lineClient
+          || (
+            !this.normalizeReference(metric.marca || '')
+            && (
+              this.normalizeReference(metric.referencia || '') === lineBrand
+              || (lineBrand === lineClient && this.normalizeReference(metric.referencia || '') === lineClient)
+            )
+          )
         )
       ));
   }
@@ -588,8 +593,13 @@ export class InvestmentsService {
         && metric.date <= endDate
         && (
           (this.normalizeReference(metric.cliente) === lineClient && this.normalizeReference(metric.marca) === lineBrand)
-          || this.normalizeReference(metric.referencia || '') === lineBrand
-          || this.normalizeReference(metric.referencia || '') === lineClient
+          || (
+            !this.normalizeReference(metric.marca || '')
+            && (
+              this.normalizeReference(metric.referencia || '') === lineBrand
+              || (lineBrand === lineClient && this.normalizeReference(metric.referencia || '') === lineClient)
+            )
+          )
         )
       ));
   }
